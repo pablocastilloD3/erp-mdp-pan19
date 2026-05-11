@@ -1,5 +1,5 @@
 <div id="view-caja" class="container-fluid py-4 d-none modulo-seccion spa-view">
-
+    <!-- CABECERA -->
     <div class="row mb-4">
         <div class="col-12 d-flex justify-content-between align-items-center">
             <div>
@@ -17,6 +17,7 @@
         </div>
     </div>
 
+    <!-- SALDO CAJA OPERATIVA -->
     <div class="row mb-4">
         <div class="col-md-4">
             <div class="card border-0 shadow-sm bg-dark text-white">
@@ -30,6 +31,33 @@
 
     <hr class="border-2 opacity-25 mb-4">
 
+    <!-- FILTROS DE BÚSQUEDA -->
+    <div class="row mb-3 gx-2 animate__animated animate__fadeIn">
+        <div class="col-md-3">
+            <div class="form-floating">
+                <select id="filtro-caja-periodo" class="form-select border-2"
+                    onchange="window.Ctrl_Caja.render()"></select>
+                <label class="small fw-bold">PERÍODO TRIBUTARIO</label>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="form-floating">
+                <select id="filtro-caja-proveedor" class="form-select border-2"
+                    onchange="window.Ctrl_Caja.render()"></select>
+                <label class="small fw-bold">FILTRAR POR ENTIDAD</label>
+            </div>
+        </div>
+        <div class="col-md-5 d-flex align-items-center justify-content-end">
+            <button class="btn btn-outline-secondary btn-sm fw-bold me-2" onclick="window.Ctrl_Caja.limpiarFiltros()">
+                <i class="bi bi-filter-left me-1"></i>LIMPIAR
+            </button>
+        </div>
+    </div>
+
+    <!-- ACORDEÓN PRINCIPAL -->
+    <div id="view-caja-acordeon-principal" class="accordion shadow-sm border-0"></div>
+
+    <!-- CONTENEDOR DE TABLA PRINCIPAL -->
     <div class="row animate__animated animate__fadeInUp">
         <div class="col-12">
             <div class="card shadow-sm border-0">
@@ -40,6 +68,7 @@
         </div>
     </div>
 
+    <!-- MODAL DE REGISTRO DE EGRESO -->
     <div class="modal fade shadow-lg" id="modal-caja-operativo" tabindex="-1" aria-hidden="true"
         data-bs-backdrop="static">
         <div class="modal-dialog">
