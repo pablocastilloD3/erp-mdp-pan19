@@ -1,7 +1,7 @@
 /**
  * @file Config.gs
  * @description Fuente de la Verdad. Segregación Zero-Trust (Público vs Secreto).
- * @version 5.1.0
+ * @version 5.3.0
  */
 
 // ============================================================================
