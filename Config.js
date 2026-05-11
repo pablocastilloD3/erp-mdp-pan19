@@ -17,7 +17,7 @@ var SECRETS = {
 // ============================================================================
 var CONFIG = {
   APP_NAME: "ERP MDP PAN19",
-  VERSION: "5.2.0",
+  VERSION: "5.3.0",
   ENV: "DEV",
   COMPLIANCE: {
     NORMA_1: "ISO 22000 COMPLIANT",
@@ -36,8 +36,7 @@ var CONFIG = {
     ROLES: 'MAESTRO_ROLES',
     LOTES: 'ABASTECIMIENTO_LOTES',
     CAJA: 'LIBRO_CAJA',
-    CXP: 'CUENTAS_POR_PAGAR',
-    CALIDAD: 'CALIDAD_LOG'
+    CXP: 'CUENTAS_POR_PAGAR'
   },
 
   MATRIZ_ALERGENOS: {
@@ -57,8 +56,7 @@ var CONFIG = {
     ROLES: 'ID_ROL',
     LOTES: 'ID_UUID',
     CAJA: 'ID_MOVIMIENTO',
-    CXP: 'ID_CXP',
-    CALIDAD: 'ID_UUID'
+    CXP: 'ID_CXP'
   }
 };
 
