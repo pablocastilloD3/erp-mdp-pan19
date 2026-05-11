@@ -1,7 +1,7 @@
 /**
  * @file Config.gs
  * @description Fuente de la Verdad. Segregación Zero-Trust (Público vs Secreto).
- * @version 5.1.0
+ * @version 5.2.0
  */
 
 // ============================================================================
@@ -17,7 +17,7 @@ var SECRETS = {
 // ============================================================================
 var CONFIG = {
   APP_NAME: "ERP MDP PAN19",
-  VERSION: "5.3.0",
+  VERSION: "5.2.0",
   ENV: "DEV",
   COMPLIANCE: {
     NORMA_1: "ISO 22000 COMPLIANT",
