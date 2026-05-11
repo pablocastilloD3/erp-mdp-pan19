@@ -1,8 +1,8 @@
 <script>
     /**
      * @file S_Caja.html
-     * @description Controlador Cliente Módulo Caja v5.2.4 (Z-Index Fix + Categorías Dinámicas SYS_CONFIG).
-     * @arquitectura Bóveda Singleton (ADC) / Memory-First Estricto.
+     * @description Controlador v5.5.1 - Restauración Completa y Sincronización Total.
+     * @arquitectura Bóveda Singleton (ADC) / Memory-First.
      */
 
     window.Ctrl_Caja = {
@@ -17,142 +17,242 @@
 
         estado: {
             listenerActivo: false,
-            modalInstance: null
+            modalInstance: null,
+            filtros: { periodo: 'TODO', proveedor: 'TODO' }
         },
 
         init: function () {
             if (!this.estado.listenerActivo) {
                 window.addEventListener('erp-datos-listos', () => {
-                    if (window.SISTEMA_ERP && window.SISTEMA_ERP.moduloActual === this.meta.id) {
-                        this.render();
-                    }
+                    if (window.SISTEMA_ERP && window.SISTEMA_ERP.moduloActual === this.meta.id) this.render();
                 });
                 this.estado.listenerActivo = true;
             }
 
             const modalEl = document.getElementById('modal-caja-operativo');
             if (modalEl) {
-                // 🚀 FIX Z-INDEX: Extraer el modal del contenedor SPA y anclarlo al body
-                if (modalEl.parentNode !== document.body) {
-                    document.body.appendChild(modalEl);
-                }
-
+                if (modalEl.parentNode !== document.body) document.body.appendChild(modalEl);
                 this.estado.modalInstance = new bootstrap.Modal(modalEl);
             }
-
             this.render();
         },
 
-        // 🚀 NUEVO: Cargador dinámico de categorías desde SYS_CONFIG
+        limpiarFiltros: function () {
+            const selectPer = document.getElementById('filtro-caja-periodo');
+            const selectProv = document.getElementById('filtro-caja-proveedor');
+            if (selectPer) selectPer.value = 'TODO';
+            if (selectProv) selectProv.value = 'TODO';
+            this.render();
+        },
+
+        resolverNombreEntidad: function (fila, db, cnf) {
+            if (fila.INSTITUCION !== 'AUT_CXP') return fila.INSTITUCION || 'SIN CATEGORÍA';
+
+            const rawCxP = db[cnf.CXP] || [];
+            const rawProv = db[cnf.PROVEEDORES] || [];
+            const cxp = rawCxP.find(c => c.ID_CXP === fila.FOLIO_VINCULADO);
+
+            if (cxp) {
+                const prov = rawProv.find(p => p.RUT_ENTIDAD === cxp.RUT_PROVEEDOR);
+                return prov ? prov.RAZON_SOCIAL : `RUT: ${cxp.RUT_PROVEEDOR}`;
+            }
+            return "PAGO AUTORIZADO (S/V)";
+        },
+
         cargarCategorias: function () {
             const db = window.SISTEMA_ERP.datos;
             const cnf = window.CONFIG.DB;
             const sysConfig = db[cnf.CONFIG] || [];
 
-            const filaConfig = sysConfig.find(f => f.PARAM_KEY === 'CATALOGO_CATEGORIAS_CAJA');
+            const filaCat = sysConfig.find(f => f.PARAM_KEY === 'CATALOGO_CATEGORIAS_CAJA');
+            let categorias = {};
 
-            let opciones = {
-                "S/I": "SIN CONFIGURACIÓN EN SYS_CONFIG"
-            };
-
-            if (filaConfig && filaConfig.PARAM_VALUE) {
-                try {
-                    opciones = JSON.parse(filaConfig.PARAM_VALUE);
-                } catch (e) {
-                    console.error("🚨 [S_Caja] JSON Inválido en CATALOGO_CATEGORIAS_CAJA");
-                }
-            }
+            try {
+                categorias = JSON.parse(filaCat?.PARAM_VALUE || '{}');
+            } catch (e) { console.error("🚨 Error al parsear CATALOGO_CATEGORIAS_CAJA"); }
 
             const selectEl = document.getElementById('caja-categoria');
             if (selectEl) {
-                selectEl.innerHTML = ''; // Limpiar opciones quemadas en HTML
-
-                // Opción por defecto
-                const optDefault = document.createElement('option');
-                optDefault.value = "";
-                optDefault.text = "Seleccione Clasificación...";
-                optDefault.disabled = true;
-                optDefault.selected = true;
-                selectEl.appendChild(optDefault);
-
-                // Popular desde la RAM (SYS_CONFIG)
-                Object.keys(opciones).forEach(llave => {
+                selectEl.innerHTML = '<option value="" disabled selected>Seleccione Clasificación...</option>';
+                Object.keys(categorias).forEach(key => {
                     const opt = document.createElement('option');
-                    opt.value = llave;
-                    opt.text = opciones[llave];
+                    opt.value = key;
+                    opt.text = categorias[key];
                     selectEl.appendChild(opt);
                 });
             }
+            return categorias;
         },
 
         render: function () {
             if (!window.SISTEMA_ERP?.datos || !window.CONFIG?.DB) return;
 
-            // 1. Inyección de Metadatos UI
-            const tituloEl = document.getElementById('view-caja-titulo');
-            const iconoEl = document.getElementById('view-caja-icono');
-            const descEl = document.getElementById('view-caja-descripcion');
-            if (tituloEl) tituloEl.innerText = this.meta.titulo;
-            if (iconoEl) iconoEl.className = `bi ${this.meta.icono} me-2 text-primary`;
-            if (descEl) descEl.innerText = this.meta.descripcion;
-
-            // 🚀 2. Ejecutar Carga Dinámica de Categorías
-            this.cargarCategorias();
-
-            // 3. Extracción Directa de RAM
             const db = window.SISTEMA_ERP.datos;
             const cnf = window.CONFIG.DB;
-            const dataCaja = db[cnf.CAJA] || [];
+            const rawData = db[cnf.CAJA] || [];
+            const sysConfig = db[cnf.CONFIG] || [];
 
-            // 4. KPI Balance (Acceso nativo a objeto JSON)
-            const saldoRAM = dataCaja.reduce((acc, f) => acc + (parseFloat(f.MONTO) || 0), 0);
-            const saldoEl = document.getElementById('view-caja-saldo-total');
-            if (saldoEl) saldoEl.innerText = saldoRAM.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' });
+            // A. Carga del Catálogo y Metas
+            const catCaja = this.cargarCategorias();
 
-            // 5. MAPEO ESTRICTO LIB_FACTORY (Usando 'key' según V5.3.0)
-            const rawCxP = db[cnf.CXP] || [];
-            const rawProv = db[cnf.PROVEEDORES] || [];
+            const metaFila = sysConfig.find(f => f.PARAM_KEY === 'META_PRESUPUESTO_CAJA');
+            let metasFinancieras = { "GLOBAL": 0 };
+            try {
+                let valorMeta = String(metaFila?.PARAM_VALUE || '{"GLOBAL":0}').trim();
+                if (valorMeta.startsWith('{')) {
+                    metasFinancieras = JSON.parse(valorMeta);
+                } else {
+                    metasFinancieras = { "GLOBAL": parseFloat(valorMeta) || 0 };
+                }
+            } catch (e) { console.warn("🚨 Error en JSON de META_PRESUPUESTO_CAJA"); }
 
-            const configTabla = {
-                data: dataCaja,
-                idKey: 'ID_MOVIMIENTO',
-                columns: [
-                    { label: 'FECHA', key: 'FECHA_BANCO', render: v => window.ERP_Utils.formatearFecha(v) },
+            // B. Enriquecimiento de Datos
+            const dataEnriquecida = rawData.map(f => ({
+                ...f,
+                _entidadNombre: this.resolverNombreEntidad(f, db, cnf),
+                _periodo: f.FECHA_BANCO ? f.FECHA_BANCO.substring(0, 7) : 'S/F',
+                _catKey: f.DESCRIPCION_BANCO || 'S/I'
+            }));
 
-                    // 🚀 CRUCE RELACIONAL DINÁMICO EN RAM
-                    {
-                        label: 'ENTIDAD / CATEGORÍA', key: 'INSTITUCION', render: (v, fila) => {
-                            if (v === 'AUT_CXP') {
-                                // 1. Buscar en Cuentas por Pagar usando el FOLIO_VINCULADO
-                                const cxpRow = rawCxP.find(c => c.ID_CXP === fila.FOLIO_VINCULADO);
-                                if (cxpRow) {
-                                    // 2. Buscar el nombre del Proveedor usando el RUT
-                                    const provRow = rawProv.find(p => p.RUT_ENTIDAD === cxpRow.RUT_PROVEEDOR);
-                                    if (provRow) {
-                                        return `<span class="badge bg-primary-subtle text-primary border shadow-sm"><i class="bi bi-shield-lock-fill me-1"></i>PAGO: ${provRow.RAZON_SOCIAL}</span>`;
-                                    }
-                                }
-                                return `<span class="badge bg-warning-subtle text-warning border">PAGO AUTORIZADO (CxP)</span>`;
+            this.popularFiltrosUI(dataEnriquecida);
+
+            const valPer = document.getElementById('filtro-caja-periodo')?.value || 'TODO';
+            const valProv = document.getElementById('filtro-caja-proveedor')?.value || 'TODO';
+
+            const dataFiltrada = dataEnriquecida.filter(f => {
+                return (valPer === 'TODO' || f._periodo === valPer) &&
+                    (valProv === 'TODO' || f._entidadNombre === valProv);
+            });
+
+            // C. Cálculos Analíticos
+            const balanceNeto = dataFiltrada.reduce((acc, f) => acc + (parseFloat(f.MONTO) || 0), 0);
+            const egresosRealizados = Math.abs(dataFiltrada.reduce((acc, f) => {
+                const m = parseFloat(f.MONTO) || 0;
+                return m < 0 ? acc + m : acc;
+            }, 0));
+
+            let metaFinal = metasFinancieras["GLOBAL"] || 0;
+            if (metaFinal === 0 && Object.keys(metasFinancieras).length > 0) {
+                metaFinal = Object.values(metasFinancieras).reduce((acc, val) => acc + (parseFloat(val) || 0), 0);
+            }
+
+            const pctEjecucion = metaFinal > 0 ? Math.min((egresosRealizados / metaFinal) * 100, 100) : 0;
+
+            this.actualizarDashboard(balanceNeto, egresosRealizados, dataFiltrada.length, metaFinal, pctEjecucion, dataFiltrada);
+
+            // D. Agrupamiento Z->A
+            const grupos = dataFiltrada.reduce((acc, f) => {
+                if (!acc[f._entidadNombre]) acc[f._entidadNombre] = [];
+                acc[f._entidadNombre].push(f);
+                return acc;
+            }, {});
+
+            const entidadesZA = Object.keys(grupos).sort((a, b) => b.localeCompare(a));
+            this.construirAcordeon(entidadesZA, grupos, catCaja);
+
+            const tituloEl = document.getElementById('view-caja-titulo');
+            if (tituloEl) tituloEl.innerText = this.meta.titulo;
+        },
+
+        actualizarDashboard: function (balance, egresos, conteo, meta, pct, data) {
+            const elSaldo = document.getElementById('kpi-caja-saldo');
+            if (elSaldo) {
+                elSaldo.innerText = balance.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' });
+                elSaldo.className = `fw-bold mb-0 ${balance < 0 ? 'text-danger' : 'text-success'}`;
+            }
+
+            document.getElementById('kpi-caja-conteo').innerText = conteo;
+            document.getElementById('kpi-presupuesto-meta').innerText = `Meta: ${meta.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}`;
+            document.getElementById('kpi-presupuesto-consumido').innerText = `Consumido: ${egresos.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}`;
+            document.getElementById('kpi-presupuesto-porcentaje').innerText = `${pct.toFixed(1)}%`;
+
+            const barra = document.getElementById('kpi-presupuesto-barra');
+            if (barra) {
+                barra.style.width = `${pct}%`;
+                barra.classList.remove('bg-success', 'bg-warning', 'bg-danger');
+                if (pct < 70) barra.classList.add('bg-success');
+                else if (pct < 90) barra.classList.add('bg-warning');
+                else barra.classList.add('bg-danger');
+            }
+
+            const gastosPorEntidad = data.reduce((acc, f) => {
+                const m = parseFloat(f.MONTO) || 0;
+                if (m < 0) acc[f._entidadNombre] = (acc[f._entidadNombre] || 0) + Math.abs(m);
+                return acc;
+            }, {});
+            const top = Object.entries(gastosPorEntidad).sort((a, b) => b[1] - a[1])[0];
+            const kpiTop = document.getElementById('kpi-caja-top');
+            if (kpiTop) kpiTop.innerText = top ? top[0] : '---';
+        },
+
+        popularFiltrosUI: function (data) {
+            const selectPer = document.getElementById('filtro-caja-periodo');
+            const selectProv = document.getElementById('filtro-caja-proveedor');
+            if (!selectPer || !selectProv || selectPer.options.length > 0) return;
+
+            const periodos = [...new Set(data.map(f => f._periodo))].sort().reverse();
+            selectPer.innerHTML = '<option value="TODO">TODOS LOS PERÍODOS</option>';
+            periodos.forEach(p => selectPer.add(new Option(p, p)));
+
+            const proveedores = [...new Set(data.map(f => f._entidadNombre))].sort();
+            selectProv.innerHTML = '<option value="TODO">TODOS LOS PROVEEDORES</option>';
+            proveedores.forEach(p => selectProv.add(new Option(p, p)));
+        },
+
+        construirAcordeon: function (entidades, grupos, catalogo) {
+            const contenedor = document.getElementById('view-caja-acordeon-principal');
+            if (!contenedor) return;
+            contenedor.innerHTML = '';
+
+            if (entidades.length === 0) {
+                contenedor.innerHTML = '<div class="alert alert-info border-2 shadow-sm text-center fw-bold">NO SE ENCONTRARON REGISTROS</div>';
+                return;
+            }
+
+            entidades.forEach((entidad, index) => {
+                const totalGrupo = grupos[entidad].reduce((acc, f) => acc + (parseFloat(f.MONTO) || 0), 0);
+                const accordionId = `acc-caja-${index}`;
+
+                contenedor.insertAdjacentHTML('beforeend', `
+                    <div class="accordion-item border-0 mb-3 shadow-sm" style="border-radius: 12px; overflow:hidden;">
+                        <h2 class="accordion-header">
+                            <button class="accordion-button collapsed fw-bold py-3" type="button" data-bs-toggle="collapse" data-bs-target="#${accordionId}">
+                                <div class="d-flex justify-content-between align-items-center w-100 me-3">
+                                    <span><i class="bi bi-building me-2 text-primary"></i>${entidad}</span>
+                                    <span class="badge ${totalGrupo < 0 ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success'} border">
+                                        ${totalGrupo.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}
+                                    </span>
+                                </div>
+                            </button>
+                        </h2>
+                        <div id="${accordionId}" class="accordion-collapse collapse" data-bs-parent="#view-caja-acordeon-principal">
+                            <div class="accordion-body p-0 bg-light">
+                                <div id="tabla-caja-entidad-${index}" class="table-responsive"></div>
+                            </div>
+                        </div>
+                    </div>`);
+
+                window.Factory.crearTabla(`tabla-caja-entidad-${index}`, {
+                    data: grupos[entidad],
+                    idKey: 'ID_MOVIMIENTO',
+                    columns: [
+                        { label: 'FECHA', key: 'FECHA_BANCO', render: v => window.ERP_Utils.formatearFecha(v) },
+                        {
+                            label: 'CLASIFICACIÓN', key: 'DESCRIPCION_BANCO', render: v => {
+                                const nombreLargo = catalogo[v] || v || 'S/I';
+                                return `<span class="badge bg-white text-dark border shadow-sm small">${nombreLargo}</span>`;
                             }
-                            // Categoría normal (Ej: Gasto Administrativo)
-                            return `<span class="badge bg-secondary-subtle text-dark border">${v || 'S/I'}</span>`;
+                        },
+                        {
+                            label: 'MONTO', key: 'MONTO', render: v => {
+                                const m = parseFloat(v) || 0;
+                                return `<span class="fw-bold ${m < 0 ? 'text-danger' : 'text-success'}">${m.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}</span>`;
+                            }
                         }
-                    },
-
-                    { label: 'GLOSA', key: 'DESCRIPCION_BANCO', render: v => v || '-' },
-                    {
-                        label: 'MONTO', key: 'MONTO', render: v => {
-                            const m = parseFloat(v) || 0;
-                            return `<span class="fw-bold ${m < 0 ? 'text-danger' : 'text-success'}">${m.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}</span>`;
-                        }
-                    },
-                    { label: 'OPERADOR', key: 'USUARIO_SYNC', render: v => `<small class="text-muted">${v || 'N/A'}</small>` }
-                ],
-                config: { pagination: true, rowsPerPage: 15, columnasCRUD: false }
-            };
-
-            // 6. Renderizado
-            window.Factory.crearTabla('view-caja-contenedor-principal', configTabla);
+                    ],
+                    config: { pagination: false, search: false, columnasCRUD: false }
+                });
+            });
         },
 
         abrirModal: function () {
@@ -162,60 +262,32 @@
         },
 
         ejecutar: function () {
-            const categoriaSelect = document.getElementById('caja-categoria');
-            if (!categoriaSelect || !categoriaSelect.value) {
-                return window.ERP_Utils.mostrarToast("Falla de Validación: Debe seleccionar una categoría.", "warning");
-            }
-
+            const cat = document.getElementById('caja-categoria').value;
             const montoEl = document.getElementById('caja-monto');
-            let mon = parseFloat(montoEl ? montoEl.value : 0);
+            let mon = parseFloat(montoEl?.value || 0);
 
-            // 1. Validamos que haya ingresado un valor numérico distinto de 0
-            if (isNaN(mon) || mon === 0) {
-                return window.ERP_Utils.mostrarToast("Falla de Validación: Ingrese un monto válido para el egreso.", "warning");
+            if (!cat || isNaN(mon) || mon === 0) {
+                return window.ERP_Utils.mostrarToast("Faltan datos o el monto es inválido.", "warning");
             }
 
-            // 🚀 2. MEJORA UX: Transformación matemática automática a Negativo.
-            // Math.abs() asegura que si el usuario tipeó "15000" o "-15000", 
-            // siempre se convertirá en el valor negativo correcto para la base de datos.
             mon = -Math.abs(mon);
 
             const payload = {
-                CATEGORIA: categoriaSelect.value,
+                CATEGORIA: cat,
                 GLOSA: document.getElementById('caja-glosa').value,
-                MONTO: mon // <-- Aquí viaja el monto ya convertido a negativo
+                MONTO: mon
             };
 
             const btn = document.getElementById('btn-caja-submit');
             if (btn) btn.disabled = true;
 
-            window.ERP_Utils.actualizarSplash('Seguridad V5', 'Inyectando transacción al servidor V8...', 50);
-
-            const ipCliente = window.SISTEMA_ERP.ipCliente || '0.0.0.0';
-
             google.script.run
-                .withSuccessHandler((res) => {
-                    let respuesta = res;
-                    try { if (typeof res === 'string') respuesta = JSON.parse(res); } catch (e) { }
-
-                    if (respuesta.error || !respuesta.success) {
-                        window.ERP_Utils.mostrarToast("Falla de Motor: " + (respuesta.message || "Error desconocido"), "danger");
-                        window.ERP_Utils.actualizarSplash('', '', 0);
-                        if (btn) btn.disabled = false;
-                        return;
-                    }
-
-                    if (this.estado.modalInstance) this.estado.modalInstance.hide();
-                    window.ERP_Utils.mostrarToast("Movimiento de caja auditado exitosamente.", "success");
+                .withSuccessHandler(() => {
+                    this.estado.modalInstance.hide();
+                    window.ERP_Utils.mostrarToast("Egreso registrado y vinculado a presupuesto.", "success");
                     window.ERP_Utils.recargaSilenciosa();
-                    if (btn) btn.disabled = false;
                 })
-                .withFailureHandler((err) => {
-                    window.ERP_Utils.mostrarToast("Desconexión crítica con el servidor GAS.", "danger");
-                    window.ERP_Utils.actualizarSplash('', '', 0);
-                    if (btn) btn.disabled = false;
-                })
-                .w_caja_guardar(JSON.stringify(payload), ipCliente);
+                .w_caja_guardar(JSON.stringify(payload), window.SISTEMA_ERP.ipCliente || '0.0.0.0');
         }
     };
 </script>

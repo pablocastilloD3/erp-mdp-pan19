@@ -1,8 +1,7 @@
 /**
- * @file W_Seguridad.gs
+ * @file W_Seguridad.js
  * @description Motor Zero Trust. Autenticación y Gestión de Usuarios (Estándar URS-28).
- * @version 5.0.0
- * @reparacion [V5] Aplicación de estructura de secciones sin alterar lógica (Zero-Delete).
+ * @version 6.0.3 (Hard-Linked Integrado con Core.js)
  */
 
 /**
@@ -20,15 +19,15 @@ function w_verificarIdentidadZeroTrust(ip) {
     if (!emailStr) throw new Error("Identidad de Google no detectada.");
     console.log("🛡️ [W_Seguridad] ==> 2. Email obtenido: " + emailStr);
 
-    var ss = SpreadsheetApp.openById(SECRETS.SPREADSHEET_ID);
-    console.log("🛡️ [W_Seguridad] ==> 3. Spreadsheet abierto con ID: " + SECRETS.SPREADSHEET_ID);
+    // 🚀 FIX: Usar el conector centralizado de Core.js (Zero-Trust)
+    var ss = _obtenerBaseDatos();
+    console.log("🛡️ [W_Seguridad] ==> 3. Spreadsheet abierto con éxito mediante _obtenerBaseDatos().");
 
     var wsUsers = ss.getSheetByName('MAESTRO_USUARIOS');
     console.log("🛡️ [W_Seguridad] ==> 4. Hoja 'MAESTRO_USUARIOS' obtenida.");
 
     var usersData = wsUsers.getDataRange().getValues();
     var userHeaders = usersData[0].map(function (h) { return String(h).trim().toUpperCase(); });
-    console.log("🛡️ [W_Seguridad] ==> 5. Datos de usuarios cargados.");
 
     var idxEmail = userHeaders.indexOf('EMAIL');
     var userRow = usersData.slice(1).find(function (r) {
@@ -37,16 +36,12 @@ function w_verificarIdentidadZeroTrust(ip) {
 
     // 1. CASO: USUARIO NO EXISTE
     if (!userRow) {
-      console.log("🛡️ [W_Seguridad] ==> 6a. Usuario NO encontrado. Registrando nuevo usuario pendiente.");
       var newUuid = Utilities.getUuid();
       registrarLogInterno('AUTH_REGISTER', 'SEGURIDAD', newUuid, 'N/A', 'PENDIENTE', 'Auto-registro: ' + emailStr, ip);
-      console.log("🛡️ [W_Seguridad] ==> 6b. Registro de auditoría para nuevo usuario completado.");
       return JSON.stringify({ authorized: false, status: 'PENDIENTE', email: emailStr });
     }
 
-    console.log("🛡️ [W_Seguridad] ==> 6. Usuario ENCONTRADO. Procediendo a validar estado y rol.");
-
-    var uuid = userRow[userHeaders.indexOf('ID_UUID')];
+    var uuid = userRow[userHeaders.indexOf('ISPRED_UUID') || userHeaders.indexOf('ID_UUID')];
     var status = String(userRow[userHeaders.indexOf('STATUS')]).trim().toUpperCase();
     var nivelAcceso = parseInt(userRow[userHeaders.indexOf('NIVEL_ACCESO')], 10);
 
@@ -60,7 +55,6 @@ function w_verificarIdentidadZeroTrust(ip) {
     let matrizPermisosStr = '[]';
     let nombreRol = 'Sin Rol';
 
-    // 🚀 FIX V6.0.1: Intercepción absoluta para el Rol SUPER (Nivel 1)
     if (nivelAcceso === 1) {
       matrizPermisosStr = '["*"]';
       nombreRol = 'SUPER';
@@ -104,9 +98,8 @@ function w_verificarIdentidadZeroTrust(ip) {
 }
 
 /**
- * @section 2. CONTROLADORES DE ESCRITURA DE SEGURIDAD (LEGACY COMPATIBILITY)
+ * @section 2. CONTROLADORES DE ESCRITURA DE SEGURIDAD
  */
-
 function w_upsertUsuario(payloadStr) {
   var LOCK = LockService.getScriptLock();
   try {
@@ -116,21 +109,20 @@ function w_upsertUsuario(payloadStr) {
 
     LOCK.waitLock(10000);
     var payload = JSON.parse(payloadStr);
-    var tabla = CONFIG.DB.USUARIOS;
+    var tabla = 'MAESTRO_USUARIOS'; // Nombre directo por seguridad core
 
     if (payload.ID_UUID === 'NUEVO') {
       payload.ID_UUID = Utilities.getUuid();
       UTIL_CrearFilaSegura(tabla, payload);
       w_registrarAuditoriaFrontend('CREATE', 'SEGURIDAD', payload.ID_UUID, 'Nuevo Usuario', '', payload.EMAIL);
     } else {
-      UTIL_ActualizarFilaSegura(tabla, 'ID_UUID', payload.ID_UUID, payload);
+      UTIL_ActualizarFilaSegura(tabla, 'ISPRED_UUID', payload.ID_UUID, payload);
       w_registrarAuditoriaFrontend('UPDATE', 'SEGURIDAD', payload.ID_UUID, 'Modificación de Usuario', '', payload.EMAIL);
     }
 
     return JSON.stringify({ error: false, success: true });
 
   } catch (e) {
-    console.error("❌ Fallo en w_upsertUsuario:", e);
     return JSON.stringify({ error: true, message: e.message });
   } finally {
     LOCK.releaseLock();
@@ -145,7 +137,7 @@ function w_upsertRol(payload) {
     }
 
     LOCK.waitLock(10000);
-    var tabla = CONFIG.DB.ROLES;
+    var tabla = 'MAESTRO_ROLES';
 
     var objGuardar = {
       ID_ROL: payload.id_rol,
@@ -154,7 +146,8 @@ function w_upsertRol(payload) {
       PERMISOS_JSON: JSON.stringify(payload.permisos)
     };
 
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(tabla);
+    // 🚀 FIX: Usar conector central
+    var sheet = _obtenerBaseDatos().getSheetByName(tabla);
     var data = sheet.getDataRange().getValues();
     var headers = data[0];
     var idCol = headers.indexOf('ID_ROL');
@@ -171,7 +164,6 @@ function w_upsertRol(payload) {
     return JSON.stringify({ error: false, success: true });
 
   } catch (e) {
-    console.error("❌ Fallo en w_upsertRol:", e);
     return JSON.stringify({ error: true, message: e.message });
   } finally {
     LOCK.releaseLock();
@@ -179,9 +171,8 @@ function w_upsertRol(payload) {
 }
 
 /**
- * @section 3. AUDITORÍA ZERO-TRUST (EVENTOS DE CIERRE)
+ * @section 3. AUDITORÍA ZERO-TRUST
  */
-
 function w_logoutAudit(motivo) {
   try {
     if (typeof registrarLogInterno === 'function') {
@@ -202,9 +193,8 @@ function w_logoutAuditDiferido(emailFront, timestampCaida) {
 }
 
 /**
- * @section 4. MOTOR DE SEGURIDAD ZERO-LATENCY (CACHE SERVICE)
+ * @section 4. MOTOR DE SEGURIDAD ZERO-LATENCY
  */
-
 function w_pingSeguridadCache() {
   try {
     var emailStr = Session.getActiveUser().getEmail().toLowerCase().trim();
@@ -216,7 +206,8 @@ function w_pingSeguridadCache() {
       return JSON.parse(datosCacheados);
     }
 
-    var ss = SpreadsheetApp.openById(SECRETS.SPREADSHEET_ID);
+    // 🚀 FIX: Usar el conector centralizado de Core.js
+    var ss = _obtenerBaseDatos();
     var wsUsers = ss.getSheetByName('MAESTRO_USUARIOS');
     var dataU = wsUsers.getDataRange().getValues();
     var headU = dataU[0].map(function (h) { return String(h).trim().toUpperCase(); });
