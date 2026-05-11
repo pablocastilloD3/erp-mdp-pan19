@@ -8,7 +8,7 @@
 // 1. SECRETS (Infraestructura - Aislao en el Servidor V8)
 // ============================================================================
 var SECRETS = {
-  SPREADSHEET_ID: "1-zTmClZh8s-xraYBdQlY5HJIQvmq_7dVCS0SmEydNMc",
+  ADSHEET_ID: "1-zTmClZh8s-xraYBdQlY5HJIQvmq_7dVCS0SmEydNMc",
   FOLDER_XML_BODEGA: "1iCMETUMuqwokGiTKeXPO_Vl_ZTnKhd4Z"
 };
 
@@ -52,7 +52,7 @@ var CONFIG = {
     CONFIG: 'PARAM_KEY',
     PROVEEDORES: 'RUT_ENTIDAD',
     AUDIT_LOG: 'ID_LOG',
-    USUARIOS: 'ID_UUID',
+    USUARIOS: 'ISPRED_UUID',
     ROLES: 'ID_ROL',
     LOTES: 'ID_UUID',
     CAJA: 'ID_MOVIMIENTO',

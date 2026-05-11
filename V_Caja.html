@@ -1,14 +1,14 @@
 <div id="view-caja" class="container-fluid py-4 d-none modulo-seccion spa-view">
-    <!-- CABECERA -->
+
     <div class="row mb-4">
         <div class="col-12 d-flex justify-content-between align-items-center">
             <div>
                 <h2 class="fw-bold mb-0 text-dark">
                     <i id="view-caja-icono" class="bi me-2 text-primary"></i>
                     <span id="view-caja-titulo" class="text-uppercase">Libro de Caja</span>
-                    <p class="text-muted small mb-0">Control de egresos administrativos e impuestos.</p>
                 </h2>
-                <p class="text-muted small mb-0" id="view-caja-descripcion"></p>
+                <p class="text-muted small mb-0" id="view-caja-descripcion">Control de egresos administrativos e
+                    impuestos.</p>
             </div>
             <div id="view-caja-acciones-header">
                 <button class="btn btn-primary fw-bold shadow-sm" onclick="window.Ctrl_Caja.abrirModal()">
@@ -18,63 +18,88 @@
         </div>
     </div>
 
-    <!-- SALDO CAJA OPERATIVA -->
-    <div class="row mb-4">
+    <div class="row mb-4 g-3 animate__animated animate__fadeIn">
+        <div class="col-md-2">
+            <div class="card border-0 shadow-sm bg-dark text-white h-100">
+                <div class="card-body p-3 text-center d-flex flex-column justify-content-center">
+                    <h6 class="small text-uppercase opacity-75 mb-1">Balance Neto</h6>
+                    <h5 id="kpi-caja-saldo" class="fw-bold mb-0">---</h5>
+                </div>
+            </div>
+        </div>
+
         <div class="col-md-4">
-            <div class="card border-0 shadow-sm bg-dark text-white">
+            <div class="card border-0 shadow-sm bg-white h-100 border-start border-4 border-warning">
                 <div class="card-body p-3">
-                    <h6 class="small text-uppercase opacity-75 mb-1">Saldo Caja Operativa</h6>
-                    <h3 id="view-caja-saldo-total" class="fw-bold mb-0 text-info">$ 0</h3>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h6 class="small text-uppercase text-muted fw-bold mb-0">Ejecución Presupuestaria</h6>
+                        <span id="kpi-presupuesto-porcentaje" class="badge rounded-pill bg-warning text-dark">0%</span>
+                    </div>
+                    <div class="progress shadow-sm mb-2" style="height: 12px;">
+                        <div id="kpi-presupuesto-barra"
+                            class="progress-bar progress-bar-striped progress-bar-animated bg-warning"
+                            role="progressbar" style="width: 0%"></div>
+                    </div>
+                    <div class="d-flex justify-content-between mt-1">
+                        <small class="text-muted fw-bold" id="kpi-presupuesto-consumido">Consumido: $0</small>
+                        <small class="fw-bold text-dark" id="kpi-presupuesto-meta">Meta: $0</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm bg-white h-100">
+                <div class="card-body p-3 text-center d-flex flex-column justify-content-center">
+                    <h6 class="small text-uppercase text-muted fw-bold mb-1">Operaciones</h6>
+                    <h3 id="kpi-caja-conteo" class="fw-bold text-primary mb-0">0</h3>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm bg-white h-100">
+                <div class="card-body p-3 text-center d-flex flex-column justify-content-center">
+                    <h6 class="small text-uppercase text-muted fw-bold mb-1">Mayor Receptor</h6>
+                    <h6 id="kpi-caja-top" class="fw-bold text-secondary mb-0 text-truncate px-2">---</h6>
                 </div>
             </div>
         </div>
     </div>
 
-    <hr class="border-2 opacity-25 mb-4">
-
-    <!-- FILTROS DE BÚSQUEDA -->
     <div class="row mb-3 gx-2 animate__animated animate__fadeIn">
         <div class="col-md-3">
-            <div class="form-floating">
-                <select id="filtro-caja-periodo" class="form-select border-2"
+            <div class="form-floating shadow-sm">
+                <select id="filtro-caja-periodo" class="form-select border-0 fw-bold text-primary"
                     onchange="window.Ctrl_Caja.render()"></select>
-                <label class="small fw-bold">PERÍODO TRIBUTARIO</label>
+                <label class="small fw-bold text-muted">PERÍODO TRIBUTARIO</label>
             </div>
         </div>
         <div class="col-md-4">
-            <div class="form-floating">
-                <select id="filtro-caja-proveedor" class="form-select border-2"
+            <div class="form-floating shadow-sm">
+                <select id="filtro-caja-proveedor" class="form-select border-0 fw-bold text-primary"
                     onchange="window.Ctrl_Caja.render()"></select>
-                <label class="small fw-bold">FILTRAR POR ENTIDAD</label>
+                <label class="small fw-bold text-muted">FILTRAR POR ENTIDAD</label>
             </div>
         </div>
         <div class="col-md-5 d-flex align-items-center justify-content-end">
-            <button class="btn btn-outline-secondary btn-sm fw-bold me-2" onclick="window.Ctrl_Caja.limpiarFiltros()">
-                <i class="bi bi-filter-left me-1"></i>LIMPIAR
+            <button class="btn btn-light border shadow-sm fw-bold px-4" onclick="window.Ctrl_Caja.limpiarFiltros()">
+                <i class="bi bi-eraser-fill me-2 text-danger"></i>LIMPIAR FILTROS
             </button>
         </div>
     </div>
 
-    <!-- ACORDEÓN PRINCIPAL -->
-    <div id="view-caja-acordeon-principal" class="accordion shadow-sm border-0"></div>
-
-    <!-- CONTENEDOR DE TABLA PRINCIPAL -->
-    <div class="row animate__animated animate__fadeInUp">
+    <div class="row mb-5 animate__animated animate__fadeInUp">
         <div class="col-12">
-            <div class="card shadow-sm border-0">
-                <div class="card-body p-0">
-                    <div id="view-caja-contenedor-principal" class="table-responsive" style="min-height: 400px;"></div>
-                </div>
+            <div id="view-caja-acordeon-principal" class="accordion shadow-sm border-0">
             </div>
         </div>
     </div>
 
-    <!-- MODAL DE REGISTRO DE EGRESO -->
-    <div class="modal fade shadow-lg" id="modal-caja-operativo" tabindex="-1" aria-hidden="true"
-        data-bs-backdrop="static">
-        <div class="modal-dialog">
-            <div class="modal-content border-0">
-                <div class="modal-header bg-primary text-white border-0">
+    <div class="modal fade" id="modal-caja-operativo" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow-lg">
+                <div class="modal-header bg-primary text-white border-0 py-3">
                     <h5 class="modal-title fw-bold text-uppercase"><i class="bi bi-shield-check me-2"></i>Registrar
                         Egreso</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
@@ -83,27 +108,28 @@
                     <form id="form-caja-operativo">
                         <div class="mb-3">
                             <label class="form-label small fw-bold text-muted text-uppercase">Clasificación</label>
-                            <select id="caja-categoria" class="form-select border-2" required>
-                                <option value="GASTO_ADM">GASTO ADMINISTRATIVO</option>
-                                <option value="IMPUESTOS">IMPUESTOS / SII</option>
-                                <option value="REMUNERACIONES">REMUNERACIONES / SUELDOS</option>
-                            </select>
+                            <select id="caja-categoria" class="form-select border-2 bg-light" required></select>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold text-muted text-uppercase">Glosa Operativa</label>
                             <input type="text" id="caja-glosa" class="form-control border-2"
-                                placeholder="Ej: Pago de insumos de oficina" required>
+                                placeholder="Ej: Insumos de oficina" required>
                         </div>
-                        <div class="mb-3">
-                            <label class="form-label small fw-bold text-muted text-uppercase">Monto del Egreso</label>
-                            <input type="number" id="caja-monto" min="1" step="any"
-                                class="form-control form-control-lg fw-bold text-danger border-2"
-                                placeholder="Ej: 25000" required>
+                        <div class="mb-4">
+                            <label class="form-label small fw-bold text-muted text-uppercase">Monto del Egreso <small
+                                    class="text-primary">(Sin signo negativo)</small></label>
+                            <div class="input-group">
+                                <span class="input-group-text border-2 bg-light fw-bold text-muted">$</span>
+                                <input type="number" id="caja-monto" min="1" step="any"
+                                    class="form-control form-control-lg fw-bold text-danger border-2"
+                                    placeholder="25000" required>
+                            </div>
                         </div>
                     </form>
                 </div>
-                <div class="modal-footer bg-light border-0">
-                    <button type="button" class="btn btn-secondary fw-bold" data-bs-dismiss="modal">CANCELAR</button>
+                <div class="modal-footer bg-light border-0 py-3">
+                    <button type="button" class="btn btn-outline-secondary fw-bold px-4"
+                        data-bs-dismiss="modal">CANCELAR</button>
                     <button type="button" class="btn btn-primary fw-bold px-4" onclick="window.Ctrl_Caja.ejecutar()"
                         id="btn-caja-submit">
                         <i class="bi bi-send-check me-2"></i>FIRMAR TRANSACCIÓN

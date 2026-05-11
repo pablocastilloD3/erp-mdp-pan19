@@ -1,7 +1,8 @@
 <script>
     /**
      * @file S_Caja.html
-     * @description Controlador v5.3.0 - Gestión Agrupada, Filtros Tributarios y Resolución de Entidades.
+     * @description Controlador v5.5.1 - Restauración Completa y Sincronización Total.
+     * @arquitectura Bóveda Singleton (ADC) / Memory-First.
      */
 
     window.Ctrl_Caja = {
@@ -13,6 +14,7 @@
             iconoTematica: 'bi-bank',
             descripcion: 'Control de egresos administrativos e impuestos.'
         },
+
         estado: {
             listenerActivo: false,
             modalInstance: null,
@@ -22,10 +24,11 @@
         init: function () {
             if (!this.estado.listenerActivo) {
                 window.addEventListener('erp-datos-listos', () => {
-                    if (window.SISTEMA_ERP?.moduloActual === this.meta.id) this.render();
+                    if (window.SISTEMA_ERP && window.SISTEMA_ERP.moduloActual === this.meta.id) this.render();
                 });
                 this.estado.listenerActivo = true;
             }
+
             const modalEl = document.getElementById('modal-caja-operativo');
             if (modalEl) {
                 if (modalEl.parentNode !== document.body) document.body.appendChild(modalEl);
@@ -35,24 +38,50 @@
         },
 
         limpiarFiltros: function () {
-            this.estado.filtros = { periodo: 'TODO', proveedor: 'TODO' };
+            const selectPer = document.getElementById('filtro-caja-periodo');
+            const selectProv = document.getElementById('filtro-caja-proveedor');
+            if (selectPer) selectPer.value = 'TODO';
+            if (selectProv) selectProv.value = 'TODO';
             this.render();
         },
 
-        /**
-         * Resuelve el nombre real de la entidad, especialmente para registros AUT_CXP.
-         */
         resolverNombreEntidad: function (fila, db, cnf) {
-            if (fila.INSTITUCION !== 'AUT_CXP') return fila.INSTITUCION;
+            if (fila.INSTITUCION !== 'AUT_CXP') return fila.INSTITUCION || 'SIN CATEGORÍA';
 
             const rawCxP = db[cnf.CXP] || [];
             const rawProv = db[cnf.PROVEEDORES] || [];
             const cxp = rawCxP.find(c => c.ID_CXP === fila.FOLIO_VINCULADO);
+
             if (cxp) {
                 const prov = rawProv.find(p => p.RUT_ENTIDAD === cxp.RUT_PROVEEDOR);
-                return prov ? prov.RAZON_SOCIAL : `PROV: ${cxp.RUT_PROVEEDOR}`;
+                return prov ? prov.RAZON_SOCIAL : `RUT: ${cxp.RUT_PROVEEDOR}`;
             }
-            return "PAGO AUTORIZADO (SIN VÍNCULO)";
+            return "PAGO AUTORIZADO (S/V)";
+        },
+
+        cargarCategorias: function () {
+            const db = window.SISTEMA_ERP.datos;
+            const cnf = window.CONFIG.DB;
+            const sysConfig = db[cnf.CONFIG] || [];
+
+            const filaCat = sysConfig.find(f => f.PARAM_KEY === 'CATALOGO_CATEGORIAS_CAJA');
+            let categorias = {};
+
+            try {
+                categorias = JSON.parse(filaCat?.PARAM_VALUE || '{}');
+            } catch (e) { console.error("🚨 Error al parsear CATALOGO_CATEGORIAS_CAJA"); }
+
+            const selectEl = document.getElementById('caja-categoria');
+            if (selectEl) {
+                selectEl.innerHTML = '<option value="" disabled selected>Seleccione Clasificación...</option>';
+                Object.keys(categorias).forEach(key => {
+                    const opt = document.createElement('option');
+                    opt.value = key;
+                    opt.text = categorias[key];
+                    selectEl.appendChild(opt);
+                });
+            }
+            return categorias;
         },
 
         render: function () {
@@ -61,81 +90,159 @@
             const db = window.SISTEMA_ERP.datos;
             const cnf = window.CONFIG.DB;
             const rawData = db[cnf.CAJA] || [];
+            const sysConfig = db[cnf.CONFIG] || [];
 
-            // 1. Preparación de Datos y Resolución de Nombres
+            // A. Carga del Catálogo y Metas
+            const catCaja = this.cargarCategorias();
+
+            const metaFila = sysConfig.find(f => f.PARAM_KEY === 'META_PRESUPUESTO_CAJA');
+            let metasFinancieras = { "GLOBAL": 0 };
+            try {
+                let valorMeta = String(metaFila?.PARAM_VALUE || '{"GLOBAL":0}').trim();
+                if (valorMeta.startsWith('{')) {
+                    metasFinancieras = JSON.parse(valorMeta);
+                } else {
+                    metasFinancieras = { "GLOBAL": parseFloat(valorMeta) || 0 };
+                }
+            } catch (e) { console.warn("🚨 Error en JSON de META_PRESUPUESTO_CAJA"); }
+
+            // B. Enriquecimiento de Datos
             const dataEnriquecida = rawData.map(f => ({
                 ...f,
                 _entidadNombre: this.resolverNombreEntidad(f, db, cnf),
-                _periodo: f.FECHA_BANCO ? f.FECHA_BANCO.substring(0, 7) : 'S/F' // YYYY-MM
+                _periodo: f.FECHA_BANCO ? f.FECHA_BANCO.substring(0, 7) : 'S/F',
+                _catKey: f.DESCRIPCION_BANCO || 'S/I'
             }));
 
-            // 2. Poblado de Filtros (Solo la primera vez o cuando cambien los datos)
             this.popularFiltrosUI(dataEnriquecida);
 
-            // 3. Aplicación de Filtros
-            let dataFiltrada = dataEnriquecida;
-            const selectPer = document.getElementById('filtro-caja-periodo');
-            const selectProv = document.getElementById('filtro-caja-proveedor');
+            const valPer = document.getElementById('filtro-caja-periodo')?.value || 'TODO';
+            const valProv = document.getElementById('filtro-caja-proveedor')?.value || 'TODO';
 
-            if (selectPer && selectPer.value !== 'TODO') {
-                dataFiltrada = dataFiltrada.filter(f => f._periodo === selectPer.value);
-            }
-            if (selectProv && selectProv.value !== 'TODO') {
-                dataFiltrada = dataFiltrada.filter(f => f._entidadNombre === selectProv.value);
+            const dataFiltrada = dataEnriquecida.filter(f => {
+                return (valPer === 'TODO' || f._periodo === valPer) &&
+                    (valProv === 'TODO' || f._entidadNombre === valProv);
+            });
+
+            // C. Cálculos Analíticos
+            const balanceNeto = dataFiltrada.reduce((acc, f) => acc + (parseFloat(f.MONTO) || 0), 0);
+            const egresosRealizados = Math.abs(dataFiltrada.reduce((acc, f) => {
+                const m = parseFloat(f.MONTO) || 0;
+                return m < 0 ? acc + m : acc;
+            }, 0));
+
+            let metaFinal = metasFinancieras["GLOBAL"] || 0;
+            if (metaFinal === 0 && Object.keys(metasFinancieras).length > 0) {
+                metaFinal = Object.values(metasFinancieras).reduce((acc, val) => acc + (parseFloat(val) || 0), 0);
             }
 
-            // 4. Agrupamiento por Entidad
+            const pctEjecucion = metaFinal > 0 ? Math.min((egresosRealizados / metaFinal) * 100, 100) : 0;
+
+            this.actualizarDashboard(balanceNeto, egresosRealizados, dataFiltrada.length, metaFinal, pctEjecucion, dataFiltrada);
+
+            // D. Agrupamiento Z->A
             const grupos = dataFiltrada.reduce((acc, f) => {
                 if (!acc[f._entidadNombre]) acc[f._entidadNombre] = [];
                 acc[f._entidadNombre].push(f);
                 return acc;
             }, {});
 
-            // 5. Ordenamiento Z -> A (por Nombre de Entidad)
-            const entidadesOrdenadas = Object.keys(grupos).sort((a, b) => b.localeCompare(a));
+            const entidadesZA = Object.keys(grupos).sort((a, b) => b.localeCompare(a));
+            this.construirAcordeon(entidadesZA, grupos, catCaja);
 
-            // 6. Construcción del Acordeón
+            const tituloEl = document.getElementById('view-caja-titulo');
+            if (tituloEl) tituloEl.innerText = this.meta.titulo;
+        },
+
+        actualizarDashboard: function (balance, egresos, conteo, meta, pct, data) {
+            const elSaldo = document.getElementById('kpi-caja-saldo');
+            if (elSaldo) {
+                elSaldo.innerText = balance.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' });
+                elSaldo.className = `fw-bold mb-0 ${balance < 0 ? 'text-danger' : 'text-success'}`;
+            }
+
+            document.getElementById('kpi-caja-conteo').innerText = conteo;
+            document.getElementById('kpi-presupuesto-meta').innerText = `Meta: ${meta.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}`;
+            document.getElementById('kpi-presupuesto-consumido').innerText = `Consumido: ${egresos.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}`;
+            document.getElementById('kpi-presupuesto-porcentaje').innerText = `${pct.toFixed(1)}%`;
+
+            const barra = document.getElementById('kpi-presupuesto-barra');
+            if (barra) {
+                barra.style.width = `${pct}%`;
+                barra.classList.remove('bg-success', 'bg-warning', 'bg-danger');
+                if (pct < 70) barra.classList.add('bg-success');
+                else if (pct < 90) barra.classList.add('bg-warning');
+                else barra.classList.add('bg-danger');
+            }
+
+            const gastosPorEntidad = data.reduce((acc, f) => {
+                const m = parseFloat(f.MONTO) || 0;
+                if (m < 0) acc[f._entidadNombre] = (acc[f._entidadNombre] || 0) + Math.abs(m);
+                return acc;
+            }, {});
+            const top = Object.entries(gastosPorEntidad).sort((a, b) => b[1] - a[1])[0];
+            const kpiTop = document.getElementById('kpi-caja-top');
+            if (kpiTop) kpiTop.innerText = top ? top[0] : '---';
+        },
+
+        popularFiltrosUI: function (data) {
+            const selectPer = document.getElementById('filtro-caja-periodo');
+            const selectProv = document.getElementById('filtro-caja-proveedor');
+            if (!selectPer || !selectProv || selectPer.options.length > 0) return;
+
+            const periodos = [...new Set(data.map(f => f._periodo))].sort().reverse();
+            selectPer.innerHTML = '<option value="TODO">TODOS LOS PERÍODOS</option>';
+            periodos.forEach(p => selectPer.add(new Option(p, p)));
+
+            const proveedores = [...new Set(data.map(f => f._entidadNombre))].sort();
+            selectProv.innerHTML = '<option value="TODO">TODOS LOS PROVEEDORES</option>';
+            proveedores.forEach(p => selectProv.add(new Option(p, p)));
+        },
+
+        construirAcordeon: function (entidades, grupos, catalogo) {
             const contenedor = document.getElementById('view-caja-acordeon-principal');
             if (!contenedor) return;
             contenedor.innerHTML = '';
 
-            if (entidadesOrdenadas.length === 0) {
-                contenedor.innerHTML = '<div class="alert alert-info border-2">No se encontraron movimientos para los filtros seleccionados.</div>';
+            if (entidades.length === 0) {
+                contenedor.innerHTML = '<div class="alert alert-info border-2 shadow-sm text-center fw-bold">NO SE ENCONTRARON REGISTROS</div>';
+                return;
             }
 
-            entidadesOrdenadas.forEach((entidad, index) => {
+            entidades.forEach((entidad, index) => {
                 const totalGrupo = grupos[entidad].reduce((acc, f) => acc + (parseFloat(f.MONTO) || 0), 0);
                 const accordionId = `acc-caja-${index}`;
 
-                const itemHTML = `
-                    <div class="accordion-item border-0 mb-2 shadow-sm">
+                contenedor.insertAdjacentHTML('beforeend', `
+                    <div class="accordion-item border-0 mb-3 shadow-sm" style="border-radius: 12px; overflow:hidden;">
                         <h2 class="accordion-header">
                             <button class="accordion-button collapsed fw-bold py-3" type="button" data-bs-toggle="collapse" data-bs-target="#${accordionId}">
-                                <div class="d-flex justify-content-between w-100 me-3">
-                                    <span><i class="bi bi-building me-2"></i>${entidad}</span>
-                                    <span class="${totalGrupo < 0 ? 'text-danger' : 'text-success'}">
+                                <div class="d-flex justify-content-between align-items-center w-100 me-3">
+                                    <span><i class="bi bi-building me-2 text-primary"></i>${entidad}</span>
+                                    <span class="badge ${totalGrupo < 0 ? 'bg-danger-subtle text-danger' : 'bg-success-subtle text-success'} border">
                                         ${totalGrupo.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' })}
                                     </span>
                                 </div>
                             </button>
                         </h2>
                         <div id="${accordionId}" class="accordion-collapse collapse" data-bs-parent="#view-caja-acordeon-principal">
-                            <div class="accordion-body p-0">
+                            <div class="accordion-body p-0 bg-light">
                                 <div id="tabla-caja-entidad-${index}" class="table-responsive"></div>
                             </div>
                         </div>
-                    </div>`;
+                    </div>`);
 
-                contenedor.insertAdjacentHTML('beforeend', itemHTML);
-
-                // Inyectar tabla de Factory para este grupo
                 window.Factory.crearTabla(`tabla-caja-entidad-${index}`, {
                     data: grupos[entidad],
                     idKey: 'ID_MOVIMIENTO',
                     columns: [
                         { label: 'FECHA', key: 'FECHA_BANCO', render: v => window.ERP_Utils.formatearFecha(v) },
-                        { label: 'GLOSA', key: 'DESCRIPCION_BANCO' },
-                        { label: 'TIPO', key: 'TIPO', render: v => `<small class="badge bg-light text-dark">${v}</small>` },
+                        {
+                            label: 'CLASIFICACIÓN', key: 'DESCRIPCION_BANCO', render: v => {
+                                const nombreLargo = catalogo[v] || v || 'S/I';
+                                return `<span class="badge bg-white text-dark border shadow-sm small">${nombreLargo}</span>`;
+                            }
+                        },
                         {
                             label: 'MONTO', key: 'MONTO', render: v => {
                                 const m = parseFloat(v) || 0;
@@ -146,31 +253,41 @@
                     config: { pagination: false, search: false, columnasCRUD: false }
                 });
             });
-
-            // Actualizar Saldo General (KPI)
-            const saldoTotal = dataFiltrada.reduce((acc, f) => acc + (parseFloat(f.MONTO) || 0), 0);
-            document.getElementById('view-caja-saldo-total').innerText = saldoTotal.toLocaleString('es-CL', { style: 'currency', currency: 'CLP' });
-            this.cargarCategorias(); // Cargar categorías del modal
         },
 
-        popularFiltrosUI: function (data) {
-            const selectPer = document.getElementById('filtro-caja-periodo');
-            const selectProv = document.getElementById('filtro-caja-proveedor');
-            if (!selectPer || !selectProv || selectPer.options.length > 0) return;
-
-            // Períodos (YYYY-MM)
-            const periodos = [...new Set(data.map(f => f._periodo))].sort().reverse();
-            selectPer.innerHTML = '<option value="TODO">TODOS LOS PERÍODOS</option>';
-            periodos.forEach(p => selectPer.add(new Option(p, p)));
-
-            // Proveedores / Entidades
-            const proveedores = [...new Set(data.map(f => f._entidadNombre))].sort();
-            selectProv.innerHTML = '<option value="TODO">TODOS LOS PROVEEDORES</option>';
-            proveedores.forEach(p => selectProv.add(new Option(p, p)));
+        abrirModal: function () {
+            const form = document.getElementById('form-caja-operativo');
+            if (form) form.reset();
+            if (this.estado.modalInstance) this.estado.modalInstance.show();
         },
 
-        cargarCategorias: function () { /* Lógica de SYS_CONFIG previa */ },
-        abrirModal: function () { /* Lógica previa */ },
-        ejecutar: function () { /* Lógica de UX Negativo previa */ }
+        ejecutar: function () {
+            const cat = document.getElementById('caja-categoria').value;
+            const montoEl = document.getElementById('caja-monto');
+            let mon = parseFloat(montoEl?.value || 0);
+
+            if (!cat || isNaN(mon) || mon === 0) {
+                return window.ERP_Utils.mostrarToast("Faltan datos o el monto es inválido.", "warning");
+            }
+
+            mon = -Math.abs(mon);
+
+            const payload = {
+                CATEGORIA: cat,
+                GLOSA: document.getElementById('caja-glosa').value,
+                MONTO: mon
+            };
+
+            const btn = document.getElementById('btn-caja-submit');
+            if (btn) btn.disabled = true;
+
+            google.script.run
+                .withSuccessHandler(() => {
+                    this.estado.modalInstance.hide();
+                    window.ERP_Utils.mostrarToast("Egreso registrado y vinculado a presupuesto.", "success");
+                    window.ERP_Utils.recargaSilenciosa();
+                })
+                .w_caja_guardar(JSON.stringify(payload), window.SISTEMA_ERP.ipCliente || '0.0.0.0');
+        }
     };
 </script>

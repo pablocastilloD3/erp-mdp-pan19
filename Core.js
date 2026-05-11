@@ -1,13 +1,18 @@
 /**
  * @file Core.gs
- * @description Punto de entrada HTTP y Motor Backend URS-28. v6.0.0
+ * @description Punto de entrada HTTP y Motor Backend URS-28. v6.0.1 (Hard-Linked)
  * @arquitectura Memory-First / Única Fuente de Verdad / Escritura Universal
  * @cumplimiento ISO 22000 / SII Chile (Trazabilidad Forense SHA-256)
- * * @reparacion [A2] registrarLogInterno unificada — eliminada declaración duplicada.
- * @reparacion [A3] w_verificarIntegridadLogs — migrada de índices hardcodeados a Exploración Activa.
- * @reparacion [NUEVO] UTIL_ExploradorCabeceras — Motor centralizado de descubrimiento de columnas.
- * @reparacion [NUEVO] LLAVES_PRIMARIAS en w_EjecutarTransaccionSegura — PK por nombre, no por posición.
  */
+
+/**
+ * @function _obtenerBaseDatos
+ * @description Conector Zero-Trust mediante ID estricto.
+ */
+function _obtenerBaseDatos() {
+  if (!SECRETS.ADSHEET_ID) throw new Error("Falla Crítica: ADSHEET_ID no configurado en Config.gs.");
+  return SpreadsheetApp.openById(SECRETS.ADSHEET_ID);
+}
 
 /**
  * ============================================================================
@@ -19,7 +24,7 @@ function doGet(e) {
     var template = HtmlService.createTemplateFromFile('Index');
     template.APP_VERSION = (typeof CONFIG !== 'undefined' && CONFIG.VERSION) ? CONFIG.VERSION : "5.1.0";
 
-    // [NUEVO] - Inyectamos el mapa logico seguro como cadena JSON
+    // Inyectamos el mapa logico seguro como cadena JSON
     template.CONFIG_PAYLOAD = JSON.stringify(CONFIG);
 
     return template.evaluate()
@@ -45,11 +50,6 @@ function include(filename) {
  * ============================================================================
  * 0.5. UTILIDAD DE EXPLORACIÓN ACTIVA DE CABECERAS
  * ============================================================================
- * @function UTIL_ExploradorCabeceras
- * @description Lee la fila de cabeceras de una hoja física y retorna un mapa
- * dinámico { NOMBRE_COLUMNA: índice_entero }. Reemplaza toda asunción posicional.
- * @param {Sheet} sheet - Objeto Sheet de Google Sheets
- * @returns {Object} Mapa de exploración. Ej: { 'ID_LOG': 0, 'TIMESTAMP': 1, ... }
  */
 function UTIL_ExploradorCabeceras(sheet) {
   var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -71,7 +71,8 @@ function w_verificarEstadoSesion(moduloRequerido) {
     var email = Session.getActiveUser().getEmail();
     if (!email) return false;
 
-    var ss = SpreadsheetApp.openById(SECRETS.SPREADSHEET_ID);
+    // 🚀 FIX: Anclaje estricto v6
+    var ss = _obtenerBaseDatos();
     var sheetUsers = ss.getSheetByName(CONFIG.DB.USUARIOS);
     var dataUsers = sheetUsers.getDataRange().getValues();
     var headUsers = dataUsers[0].map(function (h) { return String(h).trim().toUpperCase(); });
@@ -85,11 +86,9 @@ function w_verificarEstadoSesion(moduloRequerido) {
 
     if (!moduloRequerido) return true;
 
-    // 🚀 FIX CRÍTICO: Reconocimiento absoluto del Rol SUPER (Nivel 1) en el Backend
     var idRol = String(userRow[idxRol]);
     if (idRol === "1") return true;
 
-    // Validación de Permisos (Matriz de Roles)
     var sheetRoles = ss.getSheetByName(CONFIG.DB.ROLES);
     var dataRoles = sheetRoles.getDataRange().getValues();
     var headRoles = dataRoles[0].map(function (h) { return String(h).trim().toUpperCase(); });
@@ -112,16 +111,6 @@ function w_verificarEstadoSesion(moduloRequerido) {
  * 2. MOTOR DE ESCRITURA UNIVERSAL Y DIFERENCIAS (DIFF ENGINE)
  * ============================================================================
  */
-
-/**
- * @function w_EjecutarTransaccionSegura
- * @description Motor Universal v6.0.0 — Exploración Activa de Llave Primaria.
- * Elimina la heurística posicional cabeceras[0] y usa CONFIG.LLAVES_PRIMARIAS.
- * @param {string} idTablaConfig - ID de tabla en CONFIG.DB (ej: 'USUARIOS', 'ROLES')
- * @param {string} idRegistro - Valor de la llave a buscar (o 'NUEVO')
- * @param {Object} nuevosDatos - Datos a escribir
- * @param {string} ipCliente - IP capturada desde el frontend
- */
 function w_EjecutarTransaccionSegura(idTablaConfig, idRegistro, nuevosDatos, ipCliente) {
   var LOCK = LockService.getScriptLock();
   try {
@@ -135,7 +124,8 @@ function w_EjecutarTransaccionSegura(idTablaConfig, idRegistro, nuevosDatos, ipC
       return JSON.stringify({ error: true, message: 'Tabla no registrada en CONFIG.DB: ' + idTablaConfig });
     }
 
-    var ss = SpreadsheetApp.openById(SECRETS.SPREADSHEET_ID);
+    // 🚀 FIX: Anclaje estricto v6
+    var ss = _obtenerBaseDatos();
     var sheet = ss.getSheetByName(nombreHoja);
     if (!sheet) {
       return JSON.stringify({ error: true, message: 'Hoja no encontrada: ' + nombreHoja });
@@ -144,23 +134,18 @@ function w_EjecutarTransaccionSegura(idTablaConfig, idRegistro, nuevosDatos, ipC
     var fullData = sheet.getDataRange().getValues();
     var cabeceras = fullData[0].map(function (h) { return String(h).trim().toUpperCase(); });
 
-    // ═══ EXPLORACIÓN ACTIVA DE LLAVE PRIMARIA ═══
     var nombreLlavePrimaria = (CONFIG.LLAVES_PRIMARIAS && CONFIG.LLAVES_PRIMARIAS[idTablaConfig])
       ? CONFIG.LLAVES_PRIMARIAS[idTablaConfig]
-      : cabeceras[0]; // Fallback conservador
+      : cabeceras[0];
 
     var idxLlave = cabeceras.indexOf(nombreLlavePrimaria);
     if (idxLlave === -1) {
-      return JSON.stringify({
-        error: true,
-        message: 'Llave primaria "' + nombreLlavePrimaria + '" no encontrada en hoja ' + nombreHoja
-      });
+      return JSON.stringify({ error: true, message: 'Llave primaria "' + nombreLlavePrimaria + '" no encontrada' });
     }
 
     var filaIndex = -1;
     var datosAnteriores = {};
 
-    // Búsqueda por Llave Primaria descubierta
     if (idRegistro !== 'NUEVO') {
       for (var i = 1; i < fullData.length; i++) {
         if (String(fullData[i][idxLlave]) === String(idRegistro)) {
@@ -171,7 +156,6 @@ function w_EjecutarTransaccionSegura(idTablaConfig, idRegistro, nuevosDatos, ipC
       }
     }
 
-    // DIFF ENGINE
     var diff = { anterior: {}, nuevo: {} };
     var hayCambios = false;
     cabeceras.forEach(function (h) {
@@ -188,7 +172,6 @@ function w_EjecutarTransaccionSegura(idTablaConfig, idRegistro, nuevosDatos, ipC
 
     if (!hayCambios && idRegistro !== 'NUEVO') return JSON.stringify({ success: true, noChange: true });
 
-    // CONSTRUCCIÓN DE FILA
     var emailActual = Session.getActiveUser().getEmail();
     var timestampActual = new Date().toISOString();
 
@@ -200,7 +183,6 @@ function w_EjecutarTransaccionSegura(idTablaConfig, idRegistro, nuevosDatos, ipC
       return nuevosDatos.hasOwnProperty(h) ? nuevosDatos[h] : (datosAnteriores[h] || '');
     });
 
-    // ESCRITURA
     if (idRegistro === 'NUEVO') {
       sheet.appendRow(filaFinal);
     } else if (filaIndex > 0) {
@@ -209,7 +191,6 @@ function w_EjecutarTransaccionSegura(idTablaConfig, idRegistro, nuevosDatos, ipC
       return JSON.stringify({ error: true, message: 'Registro no encontrado: ' + idRegistro });
     }
 
-    // AUDITORÍA AUTOMÁTICA
     registrarLogInterno(
       idRegistro === 'NUEVO' ? 'CREATE' : 'UPDATE',
       idTablaConfig,
@@ -240,11 +221,11 @@ function getDatabaseCompleta() {
     const userEmail = Session.getActiveUser().getEmail();
     if (!userEmail) throw new Error("Sesión Inválida");
 
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    // 🚀 Este ya estaba bien en tu código
+    const ss = _obtenerBaseDatos();
     const nombresPestañas = Object.values(CONFIG.DB);
     const dbSaneada = {};
 
-    // 🚀 FIX V5.1: Uso de SpreadsheetApp nativo. Inmune a configuraciones de API.
     nombresPestañas.forEach(nombre => {
       const sheet = ss.getSheetByName(nombre);
       if (sheet) {
@@ -267,32 +248,18 @@ function getDatabaseCompleta() {
  * ============================================================================
  * 4. AUDITORÍA FORENSE — VERSIÓN CANÓNICA ÚNICA (ISO 22000)
  * ============================================================================
- * @function registrarLogInterno
- * @description Escritura forense con encadenamiento SHA-256 y Exploración Activa.
- * v6.0.0 — Versión unificada. Elimina duplicación anterior (reparación A2).
- * Todos los accesos a columnas se resuelven por nombre, no por índice fijo.
- *
- * @param {string} accion - Tipo de acción (AUTH_SUCCESS, CREATE, UPDATE, etc.)
- * @param {string} modulo - Módulo origen (SEGURIDAD, COMPRAS, etc.)
- * @param {string} idEntidad - ID del registro afectado
- * @param {string} anterior - Valor anterior (JSON string o texto)
- * @param {string} nuevo - Valor nuevo (JSON string o texto)
- * @param {string} detalles - Texto libre descriptivo
- * @param {string} ipAddress - IP del cliente (capturada en frontend)
- * @returns {boolean} true si se registró correctamente
  */
 function registrarLogInterno(accion, modulo, idEntidad, anterior, nuevo, detalles, ipAddress) {
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.DB.AUDIT_LOG);
+    // 🚀 FIX: Reemplazo de getActiveSpreadsheet() por _obtenerBaseDatos()
+    var sheet = _obtenerBaseDatos().getSheetByName(CONFIG.DB.AUDIT_LOG);
     if (!sheet) {
       console.error('❌ [Auditoría] Hoja ' + CONFIG.DB.AUDIT_LOG + ' no encontrada.');
       return false;
     }
 
-    // ═══ EXPLORACIÓN ACTIVA ═══
     var C = UTIL_ExploradorCabeceras(sheet);
 
-    // Validación estructural
     var columnasRequeridas = [
       'ID_LOG', 'TIMESTAMP', 'USER_EMAIL', 'ACTION_TYPE',
       'MODULO', 'ENTIDAD_ID', 'VALOR_ANTERIOR', 'VALOR_NUEVO',
@@ -301,23 +268,17 @@ function registrarLogInterno(accion, modulo, idEntidad, anterior, nuevo, detalle
 
     var faltantes = columnasRequeridas.filter(function (col) { return C[col] === undefined; });
     if (faltantes.length > 0) {
-      console.error('❌ [Auditoría] Columnas faltantes en ' + CONFIG.DB.AUDIT_LOG + ': ' + faltantes.join(', '));
+      console.error('❌ [Auditoría] Columnas faltantes: ' + faltantes.join(', '));
       return false;
     }
 
-    // ═══ ESLABÓN DE CADENA (Hash Previo) ═══
     var lastRow = sheet.getLastRow();
     var hashPrevio = 'GENESIS_BLOCK';
     if (lastRow > 1) {
-      // C.HASH_RECORD es índice base-0; getRange usa base-1
       hashPrevio = sheet.getRange(lastRow, C.HASH_RECORD + 1).getValue() || 'EMPTY_PREV';
     }
 
-    // ═══ VALIDACIÓN DE IP ═══
-    var ipFinal = (ipAddress && ipAddress !== '0.0.0.0' && ipAddress !== 'CAPTURANDO...')
-      ? ipAddress : 'ORIGIN_NOT_CAPTURED';
-
-    // ═══ CONSTRUCCIÓN DE FILA POR EXPLORACIÓN ═══
+    var ipFinal = (ipAddress && ipAddress !== '0.0.0.0' && ipAddress !== 'CAPTURANDO...') ? ipAddress : 'ORIGIN_NOT_CAPTURED';
     var totalCols = sheet.getLastColumn();
     var row = new Array(totalCols).fill('');
 
@@ -333,7 +294,6 @@ function registrarLogInterno(accion, modulo, idEntidad, anterior, nuevo, detalle
     row[C.DETALLES] = detalles;
     row[C.HASH_PREVIOUS] = hashPrevio;
 
-    // ═══ FIRMA DIGITAL SHA-256 ═══
     var rawContent = row[C.TIMESTAMP] + row[C.USER_EMAIL] + accion + idEntidad + (nuevo || 'N/A') + hashPrevio;
     var signature = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, rawContent, Utilities.Charset.UTF_8);
     row[C.HASH_RECORD] = signature.map(function (byte) { return ('0' + (byte & 0xFF).toString(16)).slice(-2); }).join('');
@@ -341,8 +301,7 @@ function registrarLogInterno(accion, modulo, idEntidad, anterior, nuevo, detalle
     try {
       sheet.appendRow(row);
     } catch (e) {
-      console.error('❌ [Auditoría] Fallo CRÍTICO al escribir en la hoja de logs. Verifique que la hoja "' + CONFIG.DB.AUDIT_LOG + '" existe y que tiene permisos de escritura.', e);
-      // No retornar false aquí para permitir que el flujo principal continúe si la auditoría es secundaria.
+      console.error('❌ [Auditoría] Fallo al escribir.', e);
     }
 
     return true;
@@ -354,20 +313,16 @@ function registrarLogInterno(accion, modulo, idEntidad, anterior, nuevo, detalle
 
 /**
  * ============================================================================
- * 5. VERIFICACIÓN DE INTEGRIDAD FORENSE (SHA-256 Chain Validation)
+ * 5. VERIFICACIÓN DE INTEGRIDAD FORENSE
  * ============================================================================
- * @function w_verificarIntegridadLogs
- * @description Recorre SYS_AUDIT_LOG y verifica el encadenamiento de hashes.
- * v6.0.0 — Exploración Activa de cabeceras. Corrige anomalía A3.
- * @returns {string} JSON con resultado de integridad
  */
 function w_verificarIntegridadLogs() {
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CONFIG.DB.AUDIT_LOG);
+    // 🚀 FIX: Reemplazo de getActiveSpreadsheet() por _obtenerBaseDatos()
+    var sheet = _obtenerBaseDatos().getSheetByName(CONFIG.DB.AUDIT_LOG);
     var values = sheet.getDataRange().getValues();
     if (values.length < 2) return JSON.stringify({ integro: true, analizados: 0 });
 
-    // ═══ EXPLORACIÓN ACTIVA DESDE FILA 0 ═══
     var headers = values[0];
     var C = {};
     headers.forEach(function (h, i) {
@@ -375,44 +330,23 @@ function w_verificarIntegridadLogs() {
       if (nombre) C[nombre] = i;
     });
 
-    // Validación estructural
-    var requeridas = ['ID_LOG', 'TIMESTAMP', 'USER_EMAIL', 'ACTION_TYPE',
-      'ENTIDAD_ID', 'VALOR_NUEVO', 'HASH_RECORD', 'HASH_PREVIOUS'];
+    var requeridas = ['ID_LOG', 'TIMESTAMP', 'USER_EMAIL', 'ACTION_TYPE', 'ENTIDAD_ID', 'VALOR_NUEVO', 'HASH_RECORD', 'HASH_PREVIOUS'];
     var faltantes = requeridas.filter(function (col) { return C[col] === undefined; });
-    if (faltantes.length > 0) {
-      return JSON.stringify({ error: true, message: 'Columnas faltantes: ' + faltantes.join(', ') });
-    }
+    if (faltantes.length > 0) return JSON.stringify({ error: true, message: 'Columnas faltantes: ' + faltantes.join(', ') });
 
-    // ═══ RECORRIDO DE CADENA ═══
     var hashPrevio = 'GENESIS_BLOCK';
 
     for (var i = 1; i < values.length; i++) {
       var r = values[i];
       var hashAlmacenado = r[C.HASH_RECORD];
 
-      // Recalcular firma con los mismos campos que usa registrarLogInterno
-      var content = String(r[C.TIMESTAMP])
-        + String(r[C.USER_EMAIL])
-        + String(r[C.ACTION_TYPE])
-        + String(r[C.ENTIDAD_ID])
-        + String(r[C.VALOR_NUEVO])
-        + hashPrevio;
-
-      var signature = Utilities.computeDigest(
-        Utilities.DigestAlgorithm.SHA_256, content, Utilities.Charset.UTF_8
-      );
+      var content = String(r[C.TIMESTAMP]) + String(r[C.USER_EMAIL]) + String(r[C.ACTION_TYPE]) + String(r[C.ENTIDAD_ID]) + String(r[C.VALOR_NUEVO]) + hashPrevio;
+      var signature = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, content, Utilities.Charset.UTF_8);
       var hashCalculado = signature.map(function (byte) { return ('0' + (byte & 0xFF).toString(16)).slice(-2); }).join('');
 
       if (hashCalculado !== hashAlmacenado) {
-        return JSON.stringify({
-          integro: false,
-          idRuptura: r[C.ID_LOG],
-          fila: i + 1,
-          hashEsperado: hashCalculado,
-          hashEncontrado: hashAlmacenado
-        });
+        return JSON.stringify({ integro: false, idRuptura: r[C.ID_LOG], fila: i + 1, hashEsperado: hashCalculado, hashEncontrado: hashAlmacenado });
       }
-
       hashPrevio = hashAlmacenado;
     }
 
@@ -427,27 +361,12 @@ function w_verificarIntegridadLogs() {
  * 6. PUENTES PARA EL FRONTEND
  * ============================================================================
  */
-// 🚀 FIX V6.0.1: Retornar el string crudo para evitar destrucción del payload en el servidor
-function w_obtenerDataMaestra() {
-  return getDatabaseCompleta();
-}
-
+function w_obtenerDataMaestra() { return getDatabaseCompleta(); }
 function w_getSystemTelemetry() {
   return JSON.stringify({
-    success: true,
-    version: CONFIG.VERSION,
-    env: CONFIG.ENV,
-    appName: CONFIG.APP_NAME,
-    norma1: CONFIG.COMPLIANCE.NORMA_1,
-    norma2: CONFIG.COMPLIANCE.NORMA_2,
-    arch: CONFIG.ARCHITECTURE
+    success: true, version: CONFIG.VERSION, env: CONFIG.ENV, appName: CONFIG.APP_NAME,
+    norma1: CONFIG.COMPLIANCE.NORMA_1, norma2: CONFIG.COMPLIANCE.NORMA_2, arch: CONFIG.ARCHITECTURE
   });
 }
-
-function w_registrarAuditoriaFrontend(acc, mod, id, det, ant, nvo) {
-  return registrarLogInterno(acc, mod, id, ant, nvo, det, 'FRONTEND_REQUEST');
-}
-
-function w_registrarLogForense(motivo, modulo, id, detalles, ip) {
-  return registrarLogInterno(motivo, modulo, id, 'N/A', 'N/A', detalles, ip);
-}
+function w_registrarAuditoriaFrontend(acc, mod, id, det, ant, nvo) { return registrarLogInterno(acc, mod, id, ant, nvo, det, 'FRONTEND_REQUEST'); }
+function w_registrarLogForense(motivo, modulo, id, detalles, ip) { return registrarLogInterno(motivo, modulo, id, 'N/A', 'N/A', detalles, ip); }
