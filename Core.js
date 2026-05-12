@@ -41,8 +41,28 @@ function w_validarSesion(ip) {
   });
 }
 
+/**
+ * @function w_getSystemTelemetry
+ * @description Entrega el payload completo para el Footer y Sensores.
+ */
 function w_getSystemTelemetry() {
-  return JSON.stringify({ success: true, version: "6.0.21", timestamp: new Date().toISOString() });
+  try {
+    // Verificamos que CONFIG exista para evitar errores de referencia
+    if (typeof CONFIG === 'undefined') throw new Error("CONFIG no cargado");
+
+    return JSON.stringify({
+      success: true,
+      version: CONFIG.VERSION,
+      env: CONFIG.ENV,
+      appName: CONFIG.APP_NAME,
+      norma1: CONFIG.COMPLIANCE.NORMA_1,
+      norma2: CONFIG.COMPLIANCE.NORMA_2,
+      arch: CONFIG.ARCHITECTURE,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    return JSON.stringify({ success: false, error: e.message });
+  }
 }
 
 // --- 4. DESPLIEGUE HTTP ---

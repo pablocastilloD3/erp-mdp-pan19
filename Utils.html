@@ -114,34 +114,41 @@
         // ====================================================================
         // 1. TELEMETRÍA Y SISTEMA (ISO/SII)
         // ====================================================================
+        // --- DENTRO DE Utils.html ---
 
         hidratarTelemetria: function () {
+            const self = this;
             google.script.run
-                .withSuccessHandler(resStr => {
-                    const res = this.procesarRespuestaZeroTrust(resStr);
-                    if (!res) return;
+                .withSuccessHandler(function (response) {
+                    const data = JSON.parse(response);
+                    if (data.success) {
+                        // 1. Nombre de la App
+                        const elName = document.getElementById('ui-footer-appname');
+                        if (elName) elName.innerText = data.appName;
 
-                    if (res.success) {
-                        const ids = {
-                            'ui-footer-appname': res.appName,
-                            'ui-footer-norma1': res.norma1,
-                            'ui-footer-norma2': res.norma2,
-                            'ui-footer-arch': res.arch
-                        };
-                        for (let id in ids) {
-                            const el = document.getElementById(id);
-                            if (el) el.innerText = ids[id];
+                        // 2. Sensor de Entorno y Versión
+                        const elEnv = document.getElementById('footer-env-sensor');
+                        if (elEnv) {
+                            elEnv.innerText = `v${data.version} | ${data.env}`;
+                            elEnv.classList.remove('bg-warning', 'bg-success');
+                            elEnv.classList.add(data.env === 'PROD' ? 'bg-success' : 'bg-warning');
                         }
-                        const badge = document.getElementById('footer-env-sensor');
-                        if (badge) {
-                            badge.className = res.isDev
-                                ? 'badge bg-warning text-dark ms-1'
-                                : 'badge bg-success text-white ms-1';
-                            badge.innerHTML = `v${res.version} | ${res.env}`;
-                        }
+
+                        // 3. Normas de Cumplimiento
+                        if (document.getElementById('ui-footer-norma1'))
+                            document.getElementById('ui-footer-norma1').innerText = data.norma1;
+
+                        if (document.getElementById('ui-footer-norma2'))
+                            document.getElementById('ui-footer-norma2').innerText = data.norma2;
+
+                        // 4. Arquitectura
+                        if (document.getElementById('ui-footer-arch'))
+                            document.getElementById('ui-footer-arch').innerText = data.arch;
+
+                        console.log("✅ [Utils] Telemetría de Footer sincronizada.");
                     }
                 })
-                .withFailureHandler(err => console.error("❌ [Utils] Fallo al obtener telemetría:", err))
+                .withFailureHandler(err => console.error("Fallo carga telemetría:", err))
                 .w_getSystemTelemetry();
         },
 
