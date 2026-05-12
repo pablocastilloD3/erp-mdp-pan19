@@ -248,12 +248,18 @@
         },
 
         mapearMatrizAObjetos: function (matriz) {
-            if (!Array.isArray(matriz) || matriz.length === 0) return [];
+            if (!Array.isArray(matriz) || matriz.length < 2) return [];
+
+            // Limpieza estricta de cabeceras (Fila 0)
             const headers = matriz[0].map(h => String(h || "").trim().toUpperCase());
+
             return matriz.slice(1).map(fila => {
                 const obj = {};
                 headers.forEach((h, i) => {
-                    if (h) obj[h] = (fila[i] !== undefined) ? fila[i] : "";
+                    if (h) {
+                        // Si la celda es una fecha de Google Sheets, se mantiene como objeto Date
+                        obj[h] = (fila[i] !== undefined) ? fila[i] : "";
+                    }
                 });
                 return obj;
             });
@@ -299,10 +305,27 @@
         // 5. SEGURIDAD Y AUDITORÍA (ISO 22000 / SII)
         // ====================================================================
 
-        registrarAuditoria: function (accion, modulo, idEntidad = 'N/A', detalle = '') {
-            google.script.run.w_registrarAuditoriaFrontend(
-                accion, modulo, idEntidad, detalle, 'N/A', 'N/A'
-            );
+        // Dentro de Utils.html
+        // --- DENTRO DE Utils.html ---
+
+        registrarAuditoria: function (modulo, accion, id_ref, detalle) {
+            // 1. Recuperamos la IP guardada durante el Handshake
+            const ip = window.SISTEMA_ERP.ipCliente || "0.0.0.0";
+
+            console.log(`📡 [Audit] Registrando: ${accion} en ${modulo}...`);
+
+            // 2. Llamada al servidor (Core v6.0.18)
+            // El servidor espera: acc, mod, id, det, ant, nvo
+            google.script.run
+                .withFailureHandler(err => console.warn("Fallo silencioso en Auditoría:", err))
+                .w_registrarAuditoriaFrontend(
+                    accion,   // acc
+                    modulo,   // mod
+                    id_ref,   // id
+                    detalle,  // det
+                    "N/A",    // ant (valor anterior)
+                    "N/A"     // nvo (valor nuevo)
+                );
         },
 
         generarYMostrarInformePDF: function (htmlString, tituloDocumento) {

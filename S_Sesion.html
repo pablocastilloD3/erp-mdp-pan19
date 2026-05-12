@@ -52,6 +52,7 @@
             }
         },
 
+        // Dentro de window.Ctrl_Sesion en S_Sesion.html
         iniciarAutenticacion: async function () {
             if (window.SISTEMA_ERP.authEnProgreso) return;
             window.SISTEMA_ERP.authEnProgreso = true;
@@ -70,38 +71,39 @@
                             this.estado.sesion_activa = true;
                             window.SISTEMA_ERP.usuarioActual = res.email;
 
-                            // 🚀 FIX V5.1.0: Creación de Billetera Global (Memory-First)
                             window.SISTEMA_ERP.identidad = {
                                 email: res.email,
-                                nombre: (res.nombres && res.nombres.trim() !== "") ? res.nombres : res.email,
-                                rol: res.nombre_rol || 'Nivel ' + res.nivel_acceso
+                                nombre: res.nombres || res.email,
+                                rol: res.nombre_rol || 'Usuario'
                             };
 
                             this.reiniciarReloj();
-
-                            // 🚀 FIX V5.1.0: Pintar DOM inmediatamente (Latencia Cero)
                             this.actualizarTelemetriaUI();
 
-                            console.log(`✅ [Sesion] Identidad validada: ${res.email}`);
+                            console.log(`✅ [Sesion] Handshake Zero Trust completado.`);
 
-                            const permisosFinales = JSON.parse(res.matriz_permisos || '[]');
-
+                            // Disparamos el evento que Utils.html está escuchando
                             window.dispatchEvent(new CustomEvent('erp-auth-success', {
                                 detail: {
                                     usuario: res.email,
-                                    permisos: permisosFinales,
-                                    nombres: res.nombres,
+                                    permisos: JSON.parse(res.matriz_permisos || '[]'),
                                     rol: res.nombre_rol
                                 }
                             }));
-                        } else { this.pintarPantallaBloqueo(res.status || 'ACCESO DENEGADO'); }
-                    } catch (e) { this.pintarPantallaBloqueo('ERROR DE INTEGRIDAD'); }
+                        } else {
+                            this.pintarPantallaBloqueo(res.status || 'ACCESO DENEGADO');
+                        }
+                    } catch (e) {
+                        console.error("Fallo de integridad:", e);
+                        this.pintarPantallaBloqueo('ERROR DE INTEGRIDAD');
+                    }
                 })
-                .withFailureHandler(() => {
+                .withFailureHandler((err) => {
                     window.SISTEMA_ERP.authEnProgreso = false;
+                    console.error("Fallo en Handshake:", err);
                     this.pintarPantallaBloqueo('FALLO DE COMUNICACIÓN');
                 })
-                .w_verificarIdentidadZeroTrust(ip);
+                .w_validarSesion(ip); // Llamada sincronizada con Core v6.0.12
         },
 
         // 🚀 FIX V5.1.0: Nuevo método inyector de UI migrado desde S_Seguridad
@@ -175,21 +177,30 @@
         },
 
         ejecutarCierre: function (motivo) {
-            console.warn(`🚨 [Sesion] Ejecutando cierre: ${motivo}`);
-            if (this.timers.heartbeat) clearInterval(this.timers.heartbeat);
-            if (this.timers.conteo) clearInterval(this.timers.conteo);
+            console.log(`🚨 [Sesion] Ejecutando cierre: ${motivo}`);
+            const ip = window.SISTEMA_ERP.ipCliente || "0.0.0.0";
 
-            this.estado.sesion_activa = false;
-            const ipFinal = this.estado.ip_cliente;
-
+            // 1. Llamada al servidor (Ahora con la función w_registrarLogForense)
             google.script.run
                 .withSuccessHandler(() => {
-                    window.SISTEMA_ERP.datos = {};
-                    window.SISTEMA_ERP.identidad = null;
-                    window.SISTEMA_ERP.usuarioActual = null;
-                    this.pintarPantallaBloqueo(motivo);
+                    console.log("✅ [Sesion] Log forense de salida registrado.");
+                    this.finalizarAplicacion();
                 })
-                .w_registrarLogForense(motivo, 'SISTEMA', 'N/A', `Cierre: ${motivo}`, ipFinal);
+                .withFailureHandler((err) => {
+                    console.warn("⚠️ [Sesion] No se pudo registrar log en servidor, forzando cierre local.");
+                    this.finalizarAplicacion();
+                })
+                .w_registrarLogForense(motivo, ip);
+        },
+
+        finalizarAplicacion: function () {
+            // 2. Limpieza total de RAM y redirección
+            window.SISTEMA_ERP = null;
+            localStorage.clear();
+            sessionStorage.clear();
+
+            // Redirigir a la URL de la App para reiniciar el Handshake
+            window.location.href = window.location.origin + window.location.pathname;
         },
 
         renderModal: function () {
