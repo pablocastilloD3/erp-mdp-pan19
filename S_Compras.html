@@ -1,7 +1,8 @@
 <script>
     /**
      * @file S_Compras.html
-     * @description Controlador v6.5.2. Doble Navegación, Límite de Filas y NetoEfectivo..
+     * @description Controlador v6.5.2. Quirúrgicamente alineado a V5.2.0.
+     * Soporte URS-28 y jerarquía visual por proveedor.
      */
 
     window.Ctrl_Compras = {
@@ -39,252 +40,190 @@
             this.estado.cargado = true;
         },
 
+        /**
+         * @description Helper URS-28: Parseo de celda multi-recurso.
+         */
+        _parseLinks: function (jsonStr) {
+            try { return JSON.parse(jsonStr || '{}'); } catch (e) { return { xml: null, pdf: null }; }
+        },
+
         _getNetoEfectivo: function (c) {
-            return (parseInt(c.TIPO_DTE) === 34) ? (Number(c.MONTO_EXENTO) || 0) : (Number(c.MONTO_NETO) || 0);
+            if (c.TIPO_DTE == 33 || c.TIPO_DTE == 34) return Number(c.MONTO_NETO || 0);
+            if (c.TIPO_DTE == 61) return -Number(c.MONTO_NETO || 0);
+            return 0;
+        },
+
+        hidratarFiltros: function () {
+            const provs = [...new Set(this.estado.dataFiltrada.map(it => it.RAZON_SOCIAL))].sort();
+            const select = document.getElementById('filter-compras-prov');
+            if (select) {
+                select.innerHTML = '<option value="">TODOS LOS PROVEEDORES</option>' +
+                    provs.map(p => `<option value="${p}">${p}</option>`).join('');
+            }
+        },
+
+        filtrar: function () {
+            const b = document.getElementById('search-compras').value.toUpperCase();
+            const p = document.getElementById('filter-compras-prov').value;
+
+            this.estado.dataFiltrada = (window.SISTEMA_ERP.datos['LIBRO_COMPRAS'] || []).filter(it => {
+                const matchBusqueda = it.FOLIO.toString().includes(b) || it.RUT_EMISOR.includes(b) || it.RAZON_SOCIAL.includes(b);
+                const matchProv = p === "" || it.RAZON_SOCIAL === p;
+                return matchBusqueda && matchProv;
+            });
+
+            this.estado.paginaActual = 1;
+            this.render();
+        },
+
+        cambiarLimite: function (val) {
+            this.estado.limite = parseInt(val);
+            this.estado.paginaActual = 1;
+            this.render();
         },
 
         render: function () {
             const contenedor = document.getElementById('v-compras-acordeon');
             if (!contenedor) return;
 
-            this.actualizarKPIs();
+            // KPIs (Aislado de la paginación para precisión total)
+            let tNeto = 0, tIva = 0, tTotal = 0;
+            this.estado.dataFiltrada.forEach(c => {
+                const factor = (c.TIPO_DTE == 61) ? -1 : 1;
+                tNeto += Number(c.MONTO_NETO || 0) * factor;
+                tIva += Number(c.MONTO_IVA || 0) * factor;
+                tTotal += Number(c.MONTO_TOTAL || 0) * factor;
+            });
 
-            const total = this.estado.dataFiltrada.length;
-            const totalPags = Math.ceil(total / this.estado.limite);
-            if (this.estado.paginaActual > totalPags) this.estado.paginaActual = 1;
+            document.getElementById('kpi-compras-neto').innerText = this.estado.fmt.format(tNeto);
+            document.getElementById('kpi-compras-iva').innerText = this.estado.fmt.format(tIva);
+            document.getElementById('kpi-compras-total').innerText = this.estado.fmt.format(tTotal);
 
+            // Paginación y Agrupación
             const inicio = (this.estado.paginaActual - 1) * this.estado.limite;
-            const sliceData = this.estado.dataFiltrada.slice(inicio, inicio + this.estado.limite);
+            const items = this.estado.dataFiltrada.slice(inicio, inicio + this.estado.limite);
 
-            const grupos = sliceData.reduce((acc, c) => {
-                if (!acc[c.RUT_EMISOR]) acc[c.RUT_EMISOR] = [];
-                acc[c.RUT_EMISOR].push(c);
-                return acc;
-            }, {});
+            // Lógica de Agrupación por Proveedor (Surgical Fix)
+            let lastProv = null;
+            let html = items.map((it, idx) => {
+                const links = this._parseLinks(it.URL_XML_PDF);
+                const colorDTE = it.TIPO_DTE == 61 ? 'text-danger' : 'text-dark';
+                const sign = it.TIPO_DTE == 61 ? '-' : '';
 
-            let html = "";
-            Object.keys(grupos).forEach((rut, idx) => {
-                const docs = grupos[rut];
-                const subtotalNeto = docs.reduce((s, d) => s + this._getNetoEfectivo(d), 0);
+                let provHeader = '';
+                if (it.RAZON_SOCIAL !== lastProv) {
+                    provHeader = `
+                    <div class="bg-light p-2 border-start border-4 border-primary mt-3 mb-1 shadow-sm d-flex justify-content-between align-items-center">
+                        <small class="fw-bold text-primary text-uppercase" style="letter-spacing: 1px;">
+                            <i class="bi bi-building me-2"></i>${it.RAZON_SOCIAL}
+                        </small>
+                        <span class="badge bg-white text-primary border border-primary" style="font-size: 0.65rem">RUT: ${it.RUT_EMISOR}</span>
+                    </div>`;
+                    lastProv = it.RAZON_SOCIAL;
+                }
 
-                html += `
-            <div class="accordion-item border-bottom">
-                <h2 class="accordion-header">
-                    <button class="accordion-button collapsed py-2 bg-white shadow-none" type="button" data-bs-toggle="collapse" data-bs-target="#acc-prov-${idx}">
-                        <div class="d-flex justify-content-between w-100 me-3 align-items-center">
-                            <span class="small fw-bold text-dark text-uppercase" onclick="event.stopPropagation(); Ctrl_Compras.verProveedor('${rut}')">
-                                <i class="bi bi-info-circle me-2 text-primary"></i>${docs[0].RAZON_SOCIAL} <small class="text-muted ms-1">(${rut})</small>
-                            </span>
-                            <span class="badge bg-light text-primary border px-3">${this.estado.fmt.format(subtotalNeto)} NETO</span>
+                return `
+                ${provHeader}
+                <div class="accordion-item border-0 border-bottom">
+                    <div class="d-flex align-items-center p-3 w-100 bg-white">
+                        <div class="flex-grow-1 min-w-0 me-3">
+                            <div class="d-flex align-items-center mb-1">
+                                <span class="badge bg-dark small me-2">${it.TIPO_DTE}</span>
+                                <span class="badge bg-light text-dark border small me-2">F-${it.FOLIO}</span>
+                                <span class="text-muted small">${it.FECHA_EMISION}</span>
+                            </div>
+                            <div class="fw-bold ${colorDTE}">${sign}${this.estado.fmt.format(it.MONTO_TOTAL)}</div>
                         </div>
-                    </button>
-                </h2>
-                <div id="acc-prov-${idx}" class="accordion-collapse collapse" data-bs-parent="#v-compras-acordeon">
-                    <div class="accordion-body p-0">
-                        <table class="table table-sm table-hover mb-0" style="font-size: 0.72rem;">
-                            <thead class="bg-light text-muted fw-bold">
+                        <div class="btn-group shadow-sm">
+                            ${links.pdf ? `<a href="${links.pdf}" target="_blank" class="btn btn-outline-danger btn-sm px-2"><i class="bi bi-file-earmark-pdf"></i></a>` : ''}
+                            ${links.xml ? `<a href="${links.xml}" target="_blank" class="btn btn-outline-primary btn-sm px-2"><i class="bi bi-file-earmark-code"></i></a>` : ''}
+                            <button onclick="Ctrl_Compras.verFolio('${it.ID_UUID}')" class="btn btn-outline-secondary btn-sm px-2"><i class="bi bi-eye"></i></button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            contenedor.innerHTML = html || '<div class="p-5 text-center text-muted">Sin documentos.</div>';
+            this.renderPaginacion(Math.ceil(this.estado.dataFiltrada.length / this.estado.limite));
+        },
+
+        renderPaginacion: function (totalPaginas) {
+            const containers = ['v-compras-paginacion-top', 'v-compras-paginacion-bottom'];
+            let html = `<div class="btn-group">`;
+            for (let i = 1; i <= totalPaginas; i++) {
+                const active = i === this.estado.paginaActual ? 'btn-primary' : 'btn-outline-primary';
+                html += `<button class="btn btn-sm ${active}" onclick="Ctrl_Compras.irPagina(${i})">${i}</button>`;
+            }
+            html += `</div>`;
+            containers.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = totalPaginas > 1 ? html : '';
+            });
+        },
+
+        irPagina: function (p) {
+            this.estado.paginaActual = p;
+            this.render();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+
+        verFolio: function (id) {
+            const d = this.estado.dataFiltrada.find(it => it.ID_UUID === id);
+            if (!d) return;
+
+            let productos = [];
+            try { productos = JSON.parse(d.DETALLE_JSON || '[]'); } catch (e) { }
+
+            const html = `
+                <div class="modal-header bg-dark text-white border-0 py-3">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-file-earmark-text me-2"></i>DTE FOLIO ${d.FOLIO}</h5>
+                    <button type="button" class="btn-close btn-close-white shadow-none" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4 bg-light">
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label class="small text-muted text-uppercase fw-bold">Proveedor</label>
+                            <div class="fw-bold border-start border-primary border-4 ps-2">${d.RAZON_SOCIAL}</div>
+                            <div class="small text-muted">${d.RUT_EMISOR}</div>
+                        </div>
+                        <div class="col-md-6 text-md-end">
+                            <label class="small text-muted text-uppercase fw-bold">Emisión</label>
+                            <div class="fw-bold">${d.FECHA_EMISION}</div>
+                            <span class="badge bg-primary">SII: ${d.TIPO_DTE}</span>
+                        </div>
+                    </div>
+                    <div class="table-responsive rounded shadow-sm bg-white">
+                        <table class="table table-hover mb-0" style="font-size: 0.82rem;">
+                            <thead class="table-light">
                                 <tr>
-                                    <th class="ps-3 text-center">#</th>
-                                    <th>EMISIÓN</th>
-                                    <th>FOLIO</th>
-                                    <th class="text-end">NETO</th>
-                                    <th class="text-end">IVA</th>
+                                    <th class="ps-3">#</th>
+                                    <th>DETALLE</th>
+                                    <th class="text-center">CANT</th>
+                                    <th class="text-end">UNIT.</th>
                                     <th class="text-end pe-3">TOTAL</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${docs.map((d, i) => `
-                                    <tr class="align-middle bg-white">
-                                        <td class="ps-3 text-muted text-center small">${inicio + i + 1}</td>
-                                        <td>${new Date(d.FECHA_EMISION).toLocaleDateString('es-CL')}</td>
-                                        <td class="fw-bold text-primary pointer" onclick="Ctrl_Compras.verFolio('${d.ID_UUID}')">${d.FOLIO}</td>
-                                        <td class="text-end">${this.estado.fmt.format(this._getNetoEfectivo(d))}</td>
-                                        <td class="text-end text-muted">${this.estado.fmt.format(d.MONTO_IVA || 0)}</td>
-                                        <td class="text-end fw-bold pe-3">${this.estado.fmt.format(d.MONTO_TOTAL)}</td>
-                                    </tr>`).join('')}
+                                ${productos.map((it, i) => {
+                const cant = Number(it.cantidad || it.QtyItem || 0);
+                const prc = Number(it.precio || it.PrcItem || 0);
+                return `
+                                    <tr>
+                                        <td class="text-center text-muted">${i + 1}</td>
+                                        <td class="fw-bold text-uppercase">${it.nombre || it.NmbItem || 'N/A'}</td>
+                                        <td class="text-center">${cant}</td>
+                                        <td class="text-end text-muted">${this.estado.fmt.format(prc)}</td>
+                                        <td class="text-end fw-bold pe-3 text-primary">${this.estado.fmt.format(cant * prc)}</td>
+                                    </tr>`;
+            }).join('')}
                             </tbody>
                         </table>
                     </div>
-                </div>
-            </div>`;
-            });
-
-            contenedor.innerHTML = html || `<div class="p-5 text-center text-muted small">SIN REGISTROS PARA EL FILTRO ACTUAL</div>`;
-            this.renderNavegacion(totalPags);
-        },
-
-        renderNavegacion: function (total) {
-            const top = document.getElementById('v-compras-paginacion-top');
-            const bottom = document.getElementById('v-compras-paginacion-bottom');
-            if (!top || !bottom) return;
-            if (total <= 1) { top.innerHTML = ""; bottom.innerHTML = ""; return; }
-
-            let html = `<ul class="pagination pagination-sm mb-0">
-            <li class="page-item ${this.estado.paginaActual === 1 ? 'disabled' : ''}">
-                <a class="page-link shadow-none" href="#" onclick="event.preventDefault(); Ctrl_Compras.cambiarPagina(${this.estado.paginaActual - 1})">«</a>
-            </li>`;
-
-            for (let i = 1; i <= total; i++) {
-                if (i === 1 || i === total || (i >= this.estado.paginaActual - 1 && i <= this.estado.paginaActual + 1)) {
-                    html += `<li class="page-item ${i === this.estado.paginaActual ? 'active' : ''}">
-                    <a class="page-link shadow-none" href="#" onclick="event.preventDefault(); Ctrl_Compras.cambiarPagina(${i})">${i}</a>
-                </li>`;
-                } else if (i === this.estado.paginaActual - 2 || i === this.estado.paginaActual + 2) {
-                    html += `<li class="page-item disabled"><span class="page-link border-0">...</span></li>`;
-                }
-            }
-
-            html += `<li class="page-item ${this.estado.paginaActual === total ? 'disabled' : ''}">
-                <a class="page-link shadow-none" href="#" onclick="event.preventDefault(); Ctrl_Compras.cambiarPagina(${this.estado.paginaActual + 1})">»</a>
-            </li></ul>`;
-
-            top.innerHTML = html;
-            bottom.innerHTML = html;
-        },
-
-        cambiarLimite: function (v) {
-            this.estado.limite = parseInt(v);
-            this.estado.paginaActual = 1;
-            this.render();
-        },
-
-        cambiarPagina: function (p) {
-            this.estado.paginaActual = p;
-            this.render();
-        },
-
-        actualizarKPIs: function () {
-            const res = this.estado.dataFiltrada.reduce((acc, c) => {
-                acc.n += this._getNetoEfectivo(c);
-                acc.i += (Number(c.MONTO_IVA) || 0);
-                acc.o += (Number(c.OTROS_IMPUESTOS) || 0);
-                return acc;
-            }, { n: 0, i: 0, o: 0 });
-
-            document.getElementById('kpi-compras-neto').innerText = this.estado.fmt.format(res.n);
-            document.getElementById('kpi-compras-iva').innerText = this.estado.fmt.format(res.i);
-            document.getElementById('kpi-compras-otros').innerText = this.estado.fmt.format(res.o);
-            document.getElementById('telemetria-compras').innerText = `DOCUMENTOS: ${this.estado.dataFiltrada.length}`;
-        },
-
-        hidratarFiltros: function () {
-            const d = window.SISTEMA_ERP.datos['LIBRO_COMPRAS'] || [];
-            const sP = document.getElementById('f-compras-proveedor');
-            const sM = document.getElementById('f-compras-mes');
-            if (!sP || !sM) return;
-            [...new Set(d.map(c => c.RAZON_SOCIAL))].sort().forEach(p => sP.innerHTML += `<option value="${p}">${p}</option>`);
-            [...new Set(d.map(c => c.FECHA_EMISION.substring(0, 7)))].sort().reverse().forEach(m => sM.innerHTML += `<option value="${m}">${m}</option>`);
-        },
-
-        ejecutarFiltros: function () {
-            const p = document.getElementById('f-compras-proveedor').value;
-            const m = document.getElementById('f-compras-mes').value;
-            this.estado.dataFiltrada = window.SISTEMA_ERP.datos['LIBRO_COMPRAS'].filter(c => {
-                return (p === 'TODOS' || c.RAZON_SOCIAL === p) && (m === 'TODOS' || c.FECHA_EMISION.substring(0, 7) === m);
-            });
-            this.estado.paginaActual = 1;
-            this.render();
-        },
-
-        limpiarFiltros: function () {
-            document.getElementById('f-compras-proveedor').value = 'TODOS';
-            document.getElementById('f-compras-mes').value = 'TODOS';
-            this.ejecutarFiltros();
-        },
-
-        verProveedor: function (rut) {
-            const p = window.SISTEMA_ERP.datos['MAESTRO_PROVEEDORES'].find(m => m.RUT_ENTIDAD === rut);
-            if (!p) return;
-            document.getElementById('modal-prov-content').innerHTML = `
-            <div class="modal-header bg-primary text-white p-2 px-3"><h6 class="modal-title fw-bold small">FICHA PROVEEDOR</h6><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
-            <div class="modal-body p-4">
-                <h5 class="fw-bold text-primary mb-1">${p.RAZON_SOCIAL}</h5>
-                <p class="small text-muted border-bottom pb-2 mb-3">${p.RUT_ENTIDAD}</p>
-                <div class="row g-3">
-                    <div class="col-6"><label class="text-muted small d-block">ESTADO</label><span class="fw-bold small">${p.STATUS || '---'}</span></div>
-                    <div class="col-6"><label class="text-muted small d-block">TELÉFONO</label><span class="fw-bold small">${p.TELEFONO || '---'}</span></div>
-                    <div class="col-12"><label class="text-muted small d-block">DIRECCIÓN</label><span class="small text-muted">${p.DIRECCION || 'N/A'}, ${p.COMUNA || ''}</span></div>
-                </div>
-            </div>`;
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-prov-info')).show();
-        },
-
-        /**
-         * @method verFolio
-         * @description v6.6.3 - Soporte para columna URL_XML_PDF como objeto JSON.
-         */
-        verFolio: function (uuid) {
-            const d = window.SISTEMA_ERP.datos['LIBRO_COMPRAS']?.find(c => c.ID_UUID === uuid);
-            if (!d) return;
-
-            // 1. EXTRACCIÓN DE LINKS (Protocolo Multi-Recurso)
-            // Si COLUMNAS_JSON está bien configurado, 'd.URL_XML_PDF' ya es un objeto.
-            // De lo contrario, lo parseamos manualmente por seguridad.
-            let links = {};
-            try {
-                links = typeof d.URL_XML_PDF === 'string' ? JSON.parse(d.URL_XML_PDF || "{}") : (d.URL_XML_PDF || {});
-            } catch (e) {
-                console.error("Error al procesar URL_XML_PDF", e);
-            }
-
-            const urlPDF = links.pdf || "#";
-            const urlXML = links.xml || "#";
-
-            // 2. EXTRACCIÓN DE PRODUCTOS
-            let productos = [];
-            try {
-                productos = typeof d.DETALLE_JSON === 'string' ? JSON.parse(d.DETALLE_JSON || "[]") : (d.DETALLE_JSON || []);
-            } catch (e) { productos = []; }
-
-            const html = `
-        <div class="modal-header bg-dark text-white p-2 px-3">
-            <h6 class="modal-title fw-bold small text-uppercase">Auditoría: Folio ${d.FOLIO}</h6>
-            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body p-0">
-            <div class="bg-light p-3 border-bottom d-flex justify-content-between align-items-center">
-                <div class="small"><span class="text-muted fw-bold">PROVEEDOR:</span> <strong>${d.RAZON_SOCIAL}</strong></div>
-                <div class="d-flex gap-2">
-                    <a href="${urlPDF}" target="_blank" 
-                       class="btn btn-sm btn-danger fw-bold shadow-sm ${urlPDF === '#' ? 'disabled' : ''}">
-                        <i class="bi bi-file-earmark-pdf me-1"></i>VER RESPALDO PDF
-                    </a>
-                </div>
-            </div>
-
-            <div class="table-responsive">
-                <table class="table table-sm table-striped table-hover mb-0" style="font-size: 0.8rem;">
-                    <thead class="table-dark small">
-                        <tr>
-                            <th class="ps-3 text-center" style="width: 50px;">#</th>
-                            <th>NOMBRE DEL PRODUCTO</th>
-                            <th class="text-center" style="width: 100px;">CANTIDAD</th>
-                            <th class="text-end" style="width: 140px;">COSTO NETO UNIT.</th>
-                            <th class="text-end pe-3" style="width: 140px;">TOTAL NETO</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${productos.length > 0 ? productos.map((it, i) => {
-                const cant = Number(it.cantidad || it.QtyItem || 0);
-                const precio = Number(it.precio || it.PrcItem || 0);
-                return `
-                            <tr class="align-middle">
-                                <td class="text-center text-muted fw-bold">${i + 1}</td>
-                                <td class="fw-bold text-uppercase">${it.nombre || it.NmbItem || 'N/A'}</td>
-                                <td class="text-center">${cant}</td>
-                                <td class="text-end text-muted">${this.estado.fmt.format(precio)}</td>
-                                <td class="text-end fw-bold pe-3 text-primary">${this.estado.fmt.format(cant * precio)}</td>
-                            </tr>`;
-            }).join('') : '<tr><td colspan="5" class="p-4 text-center">Sin detalle.</td></tr>'}
-                    </tbody>
-                </table>
-            </div>
-        </div>`;
+                </div>`;
 
             document.getElementById('modal-folio-content').innerHTML = html;
             bootstrap.Modal.getOrCreateInstance(document.getElementById('modal-folio-detalle')).show();
         }
-
     };
 
     window.SISTEMA_ERP.modulos.compras = window.Ctrl_Compras;
