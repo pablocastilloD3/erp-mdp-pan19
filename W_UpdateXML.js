@@ -17,8 +17,11 @@ function w_updatexml_procesarIntegracion(payloadStr) {
         const email = Session.getActiveUser().getEmail();
         const resultado = _logica_ejecutarIntegracionLote(payload.loteDTE, email, correlationId, payload.ip);
 
-        // Registro exitoso en auditoría
-        w_registrarAuditoriaFrontend("UPDATEXML", "BATCH_INTEGRATION", correlationId, "Ingesta masiva exitosa", "N/A", "N/A");
+        // ✅ En el servidor se llama DIRECTAMENTE a la función, no al frontend
+        // Asegúrate de que esta función exista en Core.gs
+        if (typeof w_registrarAuditoriaFrontend === 'function') {
+            w_registrarAuditoriaFrontend("UPDATEXML", "BATCH_INTEGRATION", correlationId, "Éxito", "N/A", "N/A");
+        }
 
         return JSON.stringify({ success: true, data: resultado });
     } catch (e) {

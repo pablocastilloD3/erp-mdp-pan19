@@ -265,30 +265,32 @@
             // 1. PREPARACIÓN DE ESTADO Y UI
             this.estado.abortar = false;
             this.mostrarBotonesControl(false);
-            window.ERP_Utils.mostrarLoading(true);
+            window.ERP_Utils.mostrarLoading(true, "Iniciando secuencia de integración...");
 
-            // Filtrado de documentos que no existen previamente en la base de datos
+            // Filtrado de documentos válidos
             const dtesValidos = this.estado.loteProcesado.filter(d => !d.existe);
             const total = dtesValidos.length;
 
             if (total === 0) {
                 window.ERP_Utils.mostrarLoading(false);
+                this.mostrarBotonesControl(true);
                 return window.ERP_Utils.mostrarToast("No hay documentos válidos para procesar.", "warning");
             }
 
             // 2. RECOLECCIÓN DE DATOS DE GRANEL (Human-in-the-Loop)
-            // Extrae los valores corregidos por el usuario en la interfaz antes del envío
             dtesValidos.forEach(dte => {
                 if (dte.requiereRevisionGranel) {
                     const safeRut = String(dte.rutEmisor).replace(/[^a-zA-Z0-9]/g, '');
                     dte.items.forEach(item => {
-                        if (item.conversion?.modificado) {
-                            const elCant = document.getElementById(`cant-${safeRut}-${dte.folio}-${item.idx}`);
-                            const elUnd = document.getElementById(`und-${safeRut}-${dte.folio}-${item.idx}`);
-                            if (elCant && elUnd) {
-                                item.cantidad = elCant.value;
-                                item.unidad = elUnd.value;
-                            }
+                        // Capturamos los valores directamente de los inputs generados en el pre-vuelo
+                        const elCant = document.getElementById(`cant-${safeRut}-${dte.folio}-${item.idx}`);
+                        const elUnd = document.getElementById(`und-${safeRut}-${dte.folio}-${item.idx}`);
+
+                        if (elCant && elUnd) {
+                            // Actualizamos el objeto DTE con la corrección del usuario
+                            item.cantidad = parseFloat(elCant.value);
+                            item.unidad = elUnd.value;
+                            console.log(`📝 [Corrección] Folio ${dte.folio}: SKU ${item.codigo} -> ${item.cantidad} ${item.unidad}`);
                         }
                     });
                 }
@@ -296,17 +298,14 @@
 
             // 3. MOTOR DE PROGRESO VISUAL (UX ASÍNCRONO)
             let indiceSimulado = 0;
-            const msPorDocumento = Math.max(1500, Math.min(3000, 10000 / total));
+            const msPorDocumento = Math.max(800, Math.min(2000, 5000 / total));
 
             this.estado.simuladorUI = setInterval(() => {
                 if (indiceSimulado < total) {
                     const dte = dtesValidos[indiceSimulado];
-                    const porcentaje = Math.round(((indiceSimulado + 1) / total) * 95);
-                    this.actualizarProgreso(porcentaje, `Procesando [${indiceSimulado + 1}/${total}]: ${dte.razonSocial}...`);
+                    const porcentaje = Math.round(((indiceSimulado + 1) / total) * 90);
+                    this.actualizarProgreso(porcentaje, `Integrando [${indiceSimulado + 1}/${total}]: ${dte.razonSocial}...`);
                     indiceSimulado++;
-                } else {
-                    this.actualizarProgreso(95, `Consolidando Certificado ISO 22000 en el servidor...`);
-                    clearInterval(this.estado.simuladorUI);
                 }
             }, msPorDocumento);
 
@@ -314,33 +313,50 @@
             try {
                 const payload = {
                     loteDTE: dtesValidos,
-                    ip: window.SISTEMA_ERP.ipCliente
+                    ip: window.SISTEMA_ERP.ipCliente || "0.0.0.0"
                 };
 
+                // Llamada al Motor Backend W_UpdateXML.gs
                 const resStr = await new Promise((resolve, reject) => {
-                    // Llamada al Motor Backend W_UpdateXML.gs
                     google.script.run
                         .withSuccessHandler(resolve)
                         .withFailureHandler(reject)
                         .w_updatexml_procesarIntegracion(JSON.stringify(payload));
                 });
 
-                // Limpieza del timer en caso de respuesta rápida del servidor
                 clearInterval(this.estado.simuladorUI);
-
                 const res = JSON.parse(resStr);
                 if (res.error) throw new Error(res.message);
 
-                // 5. CIERRE EXITOSO Y REPORTE
-                this.actualizarProgreso(100, `¡Proceso Finalizado Exitosamente!`);
-                this._renderizarReporteLote(res.data);
+                // 5. REGISTRO DE AUDITORÍA (Uso del puente de Utils para evitar ReferenceError)
+                window.ERP_Utils.registrarAuditoria(
+                    this.meta.id.toUpperCase(),
+                    "BATCH_CONFIRMATION",
+                    "LOTE-" + new Date().getTime(),
+                    `Éxito: ${res.data.successes.length} | Fallas: ${res.data.errors.length}`
+                );
+
+                // 6. CIERRE EXITOSO Y REPORTE
+                this.actualizarProgreso(100, `¡Integración Finalizada!`);
+
+                // Si tienes la función renderResultadoFinal úsala, sino usa el reporte de lote
+                if (typeof this.renderResultadoFinal === 'function') {
+                    this.renderResultadoFinal(res.data);
+                } else {
+                    this._renderizarReporteLote(res.data);
+                }
 
             } catch (error) {
                 // MANEJO DE FALLOS CRÍTICOS
                 clearInterval(this.estado.simuladorUI);
                 window.ERP_Utils.mostrarLoading(false);
-                window.ERP_Utils.mostrarToast(`Error crítico de integración: ${error.message}`, "danger");
+                this.mostrarBotonesControl(true);
+
+                window.ERP_Utils.mostrarToast(`Error de integración: ${error.message}`, "danger");
                 console.error("🚨 Fallo en integración de lote:", error);
+
+                // Registrar el fallo en la auditoría
+                window.ERP_Utils.registrarAuditoria(this.meta.id.toUpperCase(), "BATCH_FAILURE", "N/A", error.message);
             }
         },
 

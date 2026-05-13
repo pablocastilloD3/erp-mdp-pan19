@@ -101,3 +101,22 @@ function w_registrarLogForense(tipoCierre, ip) {
     return JSON.stringify({ error: true, message: e.message });
   }
 }
+
+/**
+ * @function w_registrarAuditoriaFrontend
+ * @description Sincronización de llave con Config.js (AUDIT_LOG).
+ */
+function w_registrarAuditoriaFrontend(mod, acc, id, det, ant, nvo) {
+  const log = {
+    "ID_LOG": "LOG-" + Utilities.getUuid(),
+    "TIMESTAMP": new Date().toISOString(),
+    "USUARIO": Session.getActiveUser().getEmail() || "SYSTEM",
+    "MODULO": mod,
+    "ACCION": acc,
+    "ID_REFERENCIA": id,
+    "DETALLE": det
+  };
+
+  // ✅ CORRECCIÓN: 'AUDIT_LOG' en lugar de 'AUDITORIA'
+  return w_EjecutarTransaccionSegura('AUDIT_LOG', 'NUEVO', log);
+}
